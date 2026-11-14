@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/seuros/matryona_machines/compare/matryona-machines-v0.3.0...matryona-machines-v0.4.0) (2026-11-14)
+
+
+### Features
+
+* unit-variant readback for mixed tables, symbol-or-struct and which_fields readers, optional_typed, lazy String and array messages, own_or_sibling, and delegating table arms ([6a94489](https://github.com/seuros/matryona_machines/commit/6a94489f1fff01ffc866cd7008a5bcb64e4210f7))
+
 ## [0.3.0](https://github.com/seuros/matryona_machines/compare/matryona-machines-v0.2.0...matryona-machines-v0.3.0) (2026-11-14)
 
 
