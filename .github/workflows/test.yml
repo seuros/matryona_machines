@@ -70,6 +70,9 @@ jobs:
       - name: Test inside a live Ruby
         run: cargo test -p matryona-machines-embedded
 
+      - name: Run the ruby doc tests (symbols! compile-time checks)
+        run: cargo test --doc --features ruby
+
   bare-metal:
     runs-on: ubuntu-latest
     steps:

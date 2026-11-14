@@ -10,7 +10,8 @@
 //!   [`testing::XorShift64`] and [`testing::SplitMix64`] are deterministic
 //!   generators with `below(n)`; [`testing::refused`] and
 //!   [`testing::refuses`] run a call, assert it was refused, and assert the
-//!   value equals a clone taken before it.
+//!   value equals a clone taken before it; [`testing::unchanged`] does the
+//!   same for an accepted call that must change nothing.
 //! - **`ruby`**: pulls `magnus` and `std`, for a gem's FFI crate only. A core
 //!   never depends on magnus. See [`ruby`] for the binding rules each item
 //!   enforces.

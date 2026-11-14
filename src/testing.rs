@@ -15,6 +15,9 @@
 //! let mut stack = [1_u8, 2, 3];
 //! let refusal = refused(&mut stack, |s| s.get(9).copied().ok_or("unknown"));
 //! assert_eq!(refusal, "unknown");
+//!
+//! // An accepted call that must change nothing.
+//! assert_eq!(matryona_machines::testing::unchanged(&mut stack, |s| s[1]), 2);
 //! ```
 use core::fmt::Debug;
 
@@ -128,6 +131,37 @@ pub fn refuses<S, T, E>(
 {
     let refusal = refused(subject, call);
     assert_eq!(refusal, expected.into(), "refused for another reason");
+}
+
+/// Runs `call` on `subject`, asserts `subject` equals the clone taken
+/// before the call, and returns the answer.
+///
+/// For an accepted call that must change nothing: a query through `&mut`,
+/// an idempotent repeat, a drain with nothing due.
+///
+/// ```
+/// use matryona_machines::testing::unchanged;
+///
+/// let mut ids = [4_u8, 7];
+/// let found = unchanged(&mut ids, |ids| ids.iter().position(|id| *id == 7));
+/// assert_eq!(found, Some(1));
+/// ```
+///
+/// # Panics
+///
+/// When `call` changed `subject`.
+#[track_caller]
+pub fn unchanged<S, T>(subject: &mut S, call: impl FnOnce(&mut S) -> T) -> T
+where
+    S: Clone + PartialEq + Debug,
+{
+    let before = subject.clone();
+    let answer = call(subject);
+    assert!(
+        *subject == before,
+        "the call changed the value\n before: {before:?}\n  after: {subject:?}"
+    );
+    answer
 }
 
 #[cfg(test)]

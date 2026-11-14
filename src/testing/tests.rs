@@ -1,4 +1,4 @@
-use super::{SplitMix64, XorShift64, ZERO_SEED, refused, refuses};
+use super::{SplitMix64, XorShift64, ZERO_SEED, refused, refuses, unchanged};
 
 #[test]
 fn xorshift_follows_the_published_recurrence() {
@@ -124,4 +124,29 @@ fn refused_fails_a_refusal_that_changed_the_value() {
 fn refuses_fails_another_refusal() {
     let mut full = Counter { value: 3, limit: 3 };
     refuses(&mut full, "other", |c| c.bump().map_err(|_| "full"));
+}
+
+#[test]
+fn unchanged_returns_the_answer_of_a_call_that_changed_nothing() {
+    let mut full = Counter { value: 3, limit: 3 };
+    assert_eq!(unchanged(&mut full, |c| c.value), 3);
+    // A refusal is an answer too; `unchanged` does not judge it.
+    assert_eq!(unchanged(&mut full, Counter::bump), Err(Refusal::Full));
+    // A write of the value already held is no change.
+    unchanged(&mut full, |c| c.value = 3);
+    assert_eq!(full, Counter { value: 3, limit: 3 });
+}
+
+#[test]
+#[should_panic(expected = "the call changed the value")]
+fn unchanged_fails_a_call_that_changed_the_value() {
+    let mut room = Counter { value: 0, limit: 3 };
+    let _ = unchanged(&mut room, Counter::bump);
+}
+
+#[test]
+#[should_panic(expected = "the call changed the value")]
+fn unchanged_fails_a_refusal_that_changed_the_value() {
+    let mut full = Counter { value: 3, limit: 3 };
+    let _ = unchanged(&mut full, Counter::leaky_bump);
 }
