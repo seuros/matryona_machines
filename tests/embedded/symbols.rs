@@ -2,7 +2,7 @@
 use core::cmp::Ordering;
 
 use magnus::{Error, Ruby, Symbol, prelude::*};
-use matryona_machines::ruby::{Symbols, parse, symbol};
+use matryona_machines::ruby::{SymbolNames, Symbols, parse, symbol};
 
 use crate::{eval, raises};
 
@@ -87,5 +87,53 @@ pub fn table(ruby: &Ruby) -> Result<(), Error> {
         ruby.exception_range_error(),
         "an ordering must be one of :less, :equal, :greater",
     );
+    Ok(())
+}
+
+pub fn variants() {
+    assert_eq!(
+        States::variant("time_regression"),
+        Some(State::TimeRegression)
+    );
+    assert_eq!(States::variant("pending"), Some(State::Pending));
+    assert_eq!(States::variant("Pending"), None);
+    assert_eq!(States::variant(""), None);
+    assert_eq!(Orderings::variant("less"), Some(Ordering::Less));
+    assert_eq!(Orderings::variant(":less"), None);
+}
+
+/// A refusal with data variants, as flow's, journal's and election's are.
+#[derive(Debug)]
+enum Refusal {
+    Insufficient { needed: u64, held: u64 },
+    Lease(u32, u32),
+    Full,
+}
+
+matryona_machines::symbols! {
+    /// An output-only table.
+    Refusals for Refusal as "a refusal" => names_only {
+        Insufficient { .. } => "insufficient",
+        Lease(..) => "lease",
+        Full => "full",
+    }
+}
+
+pub fn names_only(ruby: &Ruby) -> Result<(), Error> {
+    let insufficient = Refusal::Insufficient { needed: 3, held: 1 };
+    let lease = Refusal::Lease(1, 2);
+    assert_eq!(Refusals::name(&insufficient), "insufficient");
+    assert_eq!(Refusals::name(&lease), "lease");
+    assert_eq!(Refusals::name(&Refusal::Full), "full");
+    assert_eq!(Refusals::NAMES, ["insufficient", "lease", "full"]);
+    assert_eq!(Refusals::WHAT, "a refusal");
+    let made = Refusals::symbol(ruby, &lease);
+    assert!(made.equal(ruby.eval::<Symbol>(":lease")?)?);
+    if let Refusal::Insufficient { needed, held } = insufficient {
+        assert!(needed > held);
+    }
+    if let Refusal::Lease(a, b) = lease {
+        assert!(a < b);
+    }
     Ok(())
 }

@@ -1,5 +1,5 @@
 //! Integers and nanoseconds across the boundary.
-use core::{fmt::Display, num::NonZero, time::Duration};
+use core::{fmt::Display, num::NonZero, ops::RangeInclusive, time::Duration};
 use std::format;
 
 use magnus::{Error, Integer, Ruby, TryConvert, Value, prelude::*};
@@ -20,7 +20,7 @@ pub trait Bounded: TryConvert + Copy + Display + sealed::Sealed {
 /// because `NonZero<T>` for a generic `T` needs the unstable
 /// `ZeroablePrimitive` bound; this way the caller's annotation is enough:
 /// `let n: NonZero<u32> = positive(value, "n")?`.
-pub trait Positive: Copy + sealed::Sealed {
+pub trait Positive: Copy + sealed::Nonzero {
     /// The primitive the Integer is read as before the zero check.
     type Primitive: Bounded;
 
@@ -29,17 +29,24 @@ pub trait Positive: Copy + sealed::Sealed {
 }
 
 mod sealed {
-    pub trait Sealed {}
+    pub trait Sealed: PartialOrd {
+        /// One, the low end of a [`super::positive`] range.
+        const ONE: Self;
+    }
+
+    pub trait Nonzero {}
 }
 
 macro_rules! bounded {
     ($($ty:ty),*) => {$(
-        impl sealed::Sealed for $ty {}
+        impl sealed::Sealed for $ty {
+            const ONE: Self = 1;
+        }
         impl Bounded for $ty {
             const MIN: Self = <$ty>::MIN;
             const MAX: Self = <$ty>::MAX;
         }
-        impl sealed::Sealed for NonZero<$ty> {}
+        impl sealed::Nonzero for NonZero<$ty> {}
         impl Positive for NonZero<$ty> {
             type Primitive = $ty;
 
@@ -78,12 +85,39 @@ fn require_integer(ruby: &Ruby, value: Value, name: &str) -> Result<(), Error> {
 ///
 /// `TypeError` or `RangeError` as above.
 pub fn integer<T: Bounded>(value: Value, name: &str) -> Result<T, Error> {
+    integer_in(value, name, T::MIN..=T::MAX)
+}
+
+/// `value` as a `T` in the caller's `range`: [`integer`] with tighter
+/// bounds, for a limit the type does not carry (a drain's `max` up to a
+/// waiter capacity).
+///
+/// `TypeError` `"<name> must be an Integer"`, `RangeError`
+/// `"<name> must be in <LO>..=<HI>"` naming `range` for any Integer outside
+/// it, one `T` cannot hold included. An empty range accepts nothing.
+///
+/// ```ignore
+/// let max: usize = integer_in(value, "max", 0..=WAITER_CAPACITY)?;
+/// // -1, 2**64 and WAITER_CAPACITY + 1 alike: "max must be in 0..=64"
+/// ```
+///
+/// # Errors
+///
+/// `TypeError` or `RangeError` as above.
+pub fn integer_in<T: Bounded>(
+    value: Value,
+    name: &str,
+    range: RangeInclusive<T>,
+) -> Result<T, Error> {
     let ruby = Ruby::get_with(value);
     require_integer(&ruby, value, name)?;
-    T::try_convert(value).map_err(|_| {
-        let message = format!("{name} must be in {}..={}", T::MIN, T::MAX);
-        Error::new(ruby.exception_range_error(), message)
-    })
+    T::try_convert(value)
+        .ok()
+        .filter(|held| range.contains(held))
+        .ok_or_else(|| {
+            let message = format!("{name} must be in {}..={}", range.start(), range.end());
+            Error::new(ruby.exception_range_error(), message)
+        })
 }
 
 /// `value` as a `NonZero`: [`integer`], with zero (and, for a signed type,
@@ -99,15 +133,33 @@ pub fn integer<T: Bounded>(value: Value, name: &str) -> Result<T, Error> {
 ///
 /// `TypeError` `"<name> must be an Integer"`, or `RangeError` as above.
 pub fn positive<P: Positive>(value: Value, name: &str) -> Result<P, Error> {
-    let ruby = Ruby::get_with(value);
-    require_integer(&ruby, value, name)?;
-    P::Primitive::try_convert(value)
-        .ok()
-        .and_then(P::positive)
-        .ok_or_else(|| {
-            let message = format!("{name} must be in 1..={}", P::Primitive::MAX);
-            Error::new(ruby.exception_range_error(), message)
-        })
+    let primitive = integer_in(
+        value,
+        name,
+        <P::Primitive as sealed::Sealed>::ONE..=P::Primitive::MAX,
+    )?;
+    P::positive(primitive).ok_or_else(|| {
+        // Unreachable: the range starts at one.
+        let message = format!("{name} must be in 1..={}", P::Primitive::MAX);
+        Error::new(Ruby::get_with(value).exception_range_error(), message)
+    })
+}
+
+/// `nil` as `None`, anything else as [`positive`] reads it, messages
+/// included: an optional count (a fair queue's `heads`).
+///
+/// ```ignore
+/// let heads: Option<NonZero<u32>> = optional_positive(value, "heads")?;
+/// ```
+///
+/// # Errors
+///
+/// As [`positive`], for a value that is not `nil`.
+pub fn optional_positive<P: Positive>(value: Value, name: &str) -> Result<Option<P>, Error> {
+    if value.is_nil() {
+        return Ok(None);
+    }
+    positive(value, name).map(Some)
 }
 
 /// `nil` as `None`, anything else as [`integer`] reads it, messages

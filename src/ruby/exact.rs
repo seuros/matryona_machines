@@ -53,9 +53,10 @@ use std::borrow::Cow;
 
 use magnus::{
     Error, Module, Object, RArray, RClass, RFile, RHash, RMatch, RModule, RObject, RString,
-    RStruct, RTypedData, Ruby, TryConvert, TypedData, Value, prelude::*, typed_data::Obj,
-    value::ReprValue,
+    RStruct, RTypedData, Ruby, Value, prelude::*, value::ReprValue,
 };
+
+use super::message::refusal;
 
 /// Whether `a` and `b` are the same class, asked natively: `Module#<=` both
 /// ways through `rb_class_inherited_p`, the identity rule [`instance_of`]
@@ -104,9 +105,28 @@ pub fn instance_of(value: impl ReprValue, class: RClass) -> bool {
         && singleton_of(value).is_some_and(|own| same_class(own, actual))
 }
 
-/// `TypeError` with `message`, built only on refusal.
-fn refuse<M: Into<Cow<'static, str>>>(ruby: &Ruby, message: impl FnOnce() -> M) -> Error {
-    Error::new(ruby.exception_type_error(), message())
+/// The index of the first of `classes` that `value` is an instance of
+/// exactly, by [`instance_of`]'s rule; `None` when it is none of them.
+///
+/// For an argument that may be one of several value classes (a bound that
+/// is a `Deadline` or an `Interval`, a standing that is `Active` or
+/// `Closed`): branch on the index, then read the fields with
+/// [`exact_fields`](super::exact_fields) for that class. A subclass of any
+/// of them is none of them.
+///
+/// ```ignore
+/// let classes = CLASSES.get(ruby)?;
+/// match which(value, &[classes.active.get(ruby), classes.closed.get(ruby)]) {
+///     Some(0) => /* Active */,
+///     Some(_) => /* Closed */,
+///     None => return Err(Error::new(ruby.exception_type_error(),
+///         "standing must be a BudgetMachines::Active or BudgetMachines::Closed")),
+/// }
+/// ```
+#[must_use]
+pub fn which(value: impl ReprValue, classes: &[RClass]) -> Option<usize> {
+    let value = value.as_value();
+    classes.iter().position(|class| instance_of(value, *class))
 }
 
 /// `value` as the `Data`/`Struct` it must be, an instance of exactly
@@ -114,7 +134,7 @@ fn refuse<M: Into<Cow<'static, str>>>(ruby: &Ruby, message: impl FnOnce() -> M) 
 ///
 /// `TypeError` with `message` otherwise, a subclass included. Read
 /// its fields with [`RStruct::aref`], which runs no Ruby, or take them all
-/// with [`exact_fields`].
+/// with [`exact_fields`](super::exact_fields).
 ///
 /// # Errors
 ///
@@ -146,40 +166,7 @@ pub fn exact_struct_with<M: Into<Cow<'static, str>>>(
 ) -> Result<RStruct, Error> {
     RStruct::from_value(value.as_value())
         .filter(|held| instance_of(*held, class))
-        .ok_or_else(|| refuse(ruby, message))
-}
-
-/// The `N` fields of an instance of exactly the `Data`/`Struct` `class`, in
-/// member order.
-///
-/// They are read from the struct itself: no reader runs, so a
-/// redefined one is ignored and cannot re-enter. `TypeError` with `message`
-/// for anything else, a struct of exactly `class` with other than `N`
-/// members included (the binding and the class disagree).
-///
-/// ```ignore
-/// let [id, attempt] = exact_fields::<2>(ruby, value, class, "expected a Claimed")?;
-/// ```
-///
-/// # Errors
-///
-/// `TypeError` as above.
-pub fn exact_fields<const N: usize>(
-    ruby: &Ruby,
-    value: impl ReprValue,
-    class: RClass,
-    message: impl Into<Cow<'static, str>>,
-) -> Result<[Value; N], Error> {
-    let message = message.into();
-    let fields = exact_struct(ruby, value, class, message.clone())?;
-    if fields.size() != N {
-        return Err(refuse(ruby, || message));
-    }
-    let mut out = [ruby.qnil().as_value(); N];
-    for (index, slot) in out.iter_mut().enumerate() {
-        *slot = fields.aref(index)?;
-    }
-    Ok(out)
+        .ok_or_else(|| refusal(ruby, message))
 }
 
 /// `value` as an `Array` that is exactly an `Array`, no subclass, so its
@@ -195,7 +182,7 @@ pub fn exact_array(
 ) -> Result<RArray, Error> {
     RArray::from_value(value.as_value())
         .filter(|held| instance_of(*held, ruby.class_array()))
-        .ok_or_else(|| refuse(ruby, || message))
+        .ok_or_else(|| refusal(ruby, || message))
 }
 
 /// The `N` elements of exactly an `Array` (no subclass) of exactly `N`
@@ -217,34 +204,5 @@ pub fn exact_array_n<const N: usize>(
     let message = message.into();
     exact_array(ruby, value, message.clone())?
         .to_value_array::<N>()
-        .map_err(|_| refuse(ruby, || message))
-}
-
-/// `value` as the wrapped Rust `T`, an instance of exactly `class`.
-///
-/// `TryConvert` for `Obj<T>` accepts a subclass instance, this refuses it,
-/// and anything not wrapping a `T`, with `TypeError` and `message`. Pass the
-/// class `T` is wrapped as, pinned at init.
-///
-/// ```ignore
-/// let ticket: Obj<Ticket> = exact_typed(ruby, value, classes.ticket.get(ruby),
-///     "ticket must be a BanditMachines::Ticket")?;
-/// ```
-///
-/// # Errors
-///
-/// `TypeError` as above.
-pub fn exact_typed<T: TypedData>(
-    ruby: &Ruby,
-    value: impl ReprValue,
-    class: RClass,
-    message: impl Into<Cow<'static, str>>,
-) -> Result<Obj<T>, Error> {
-    let value = value.as_value();
-    if instance_of(value, class)
-        && let Ok(held) = Obj::<T>::try_convert(value)
-    {
-        return Ok(held);
-    }
-    Err(refuse(ruby, || message))
+        .map_err(|_| refusal(ruby, || message))
 }

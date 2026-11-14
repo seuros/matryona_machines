@@ -1,4 +1,4 @@
-//! Refusals and other unit-variant enums as Symbols.
+//! Refusals and other enums as Symbols.
 use std::{format, string::String, vec::Vec};
 
 use magnus::{Error, Ruby, Symbol, Value};
@@ -71,6 +71,21 @@ pub trait Symbols {
         symbol(ruby, Self::name(variant))
     }
 
+    /// The variant named `name`, or `None`: the lookup [`parse`] does, for
+    /// a name that is not a Symbol argument (two tables sharing a name,
+    /// a name read from a `Data` field).
+    ///
+    /// ```ignore
+    /// let overtaken = Ballots::variant("overtaken"); // Some(Ballot::Overtaken)
+    /// ```
+    #[must_use]
+    fn variant(name: &str) -> Option<Self::Variant> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|variant| Self::name(*variant) == name)
+    }
+
     /// The variant the Symbol `value` names: [`parse`] over `ALL`.
     ///
     /// # Errors
@@ -78,6 +93,33 @@ pub trait Symbols {
     /// `TypeError` for a non-Symbol, `RangeError` listing every Symbol.
     fn parse(ruby: &Ruby, value: Value) -> Result<Self::Variant, Error> {
         parse(ruby, value, Self::WHAT, Self::ALL, Self::name)
+    }
+}
+
+/// An output-only Symbol table, for an enum whose variants carry data
+/// (`Pinned { .. }`, `Lease(..)`): each variant's name, and the variant
+/// as its Symbol.
+///
+/// Such a variant cannot be built from its name, so there is no `ALL` and
+/// no `parse`; refusals leave as Symbols and never come back. Generate it
+/// with the `names_only` form of [`symbols!`](crate::symbols), which proves
+/// the `match` covers every variant.
+pub trait SymbolNames {
+    /// The enum, typically the core's.
+    type Variant;
+    /// What a value of the enum is (`"a refusal"`), for documentation and
+    /// for messages a gem writes about it.
+    const WHAT: &'static str;
+    /// Every name, in the table's order.
+    const NAMES: &'static [&'static str];
+
+    /// The variant's Symbol name.
+    fn name(variant: &Self::Variant) -> &'static str;
+
+    /// The variant as its Symbol.
+    #[must_use]
+    fn symbol(ruby: &Ruby, variant: &Self::Variant) -> Symbol {
+        symbol(ruby, Self::name(variant))
     }
 }
 
@@ -150,137 +192,4 @@ const fn equal(a: &[u8], b: &[u8]) -> bool {
         i += 1;
     }
     true
-}
-
-/// A compiler-checked Symbol table for a unit-variant enum, the core's own
-/// included.
-///
-/// ```ignore
-/// use matryona_machines::ruby::Symbols;
-/// use outbox_machines::Refusal;
-///
-/// matryona_machines::symbols! {
-///     /// The core's refusals as Symbols.
-///     pub Refusals for Refusal as "a refusal" {
-///         Full => "full",
-///         Stale => "stale",
-///         TimeRegression => "time_regression",
-///     }
-/// }
-///
-/// Ok(Refusals::symbol(ruby, refusal).as_value())     // out
-/// let refusal = Refusals::parse(ruby, value)?;        // in
-/// ```
-///
-/// It declares the unit struct `Refusals` and implements [`Symbols`] for
-/// it. The table is a local type, so the core's enum may be foreign: the
-/// impl is of a foreign trait for a local type, which the orphan rule
-/// allows, and nothing is implemented on the enum itself.
-///
-/// # Why the list cannot miss a variant
-///
-/// The one list of `Variant => "name"` pairs is expanded twice: into
-/// `name`, a `match` with no wildcard arm, and into `ALL`. A variant added
-/// to the enum but not to the table makes the `match` non-exhaustive, which
-/// is a hard error (`E0004`), so the crate does not build until the variant
-/// is listed, and then it is in `ALL` too, because `ALL` is made from the
-/// same tokens. No count needs asserting: `ALL` holds exactly the arms of
-/// an exhaustive match. The rest is checked as well:
-///
-/// - a variant listed twice fails a `const` assertion on the variants'
-///   discriminants, so `ALL` holds no duplicate (the `match` would only
-///   warn of an unreachable arm, and a lint inside another crate's macro is
-///   silenced);
-/// - two variants given one name, or a name that is not `[a-z][a-z0-9_]*`,
-///   fail a `const` assertion, so `parse` can always tell them apart;
-/// - a variant that carries data is not a unit pattern, so it does not
-///   compile either: the table is for fieldless enums only, which
-///   is also what makes the discriminant cast possible;
-/// - a `#[non_exhaustive]` foreign enum can never be matched exhaustively,
-///   so it cannot have a table (the conventions forbid the attribute).
-///
-/// A missing variant does not compile:
-///
-/// ```compile_fail
-/// enum Light { Red, Amber, Green }
-///
-/// matryona_machines::symbols! {
-///     Lights for Light as "a light" { Red => "red", Green => "green" }
-/// }
-/// ```
-///
-/// Nor does a variant listed twice:
-///
-/// ```compile_fail
-/// enum Light { Red, Amber, Green }
-///
-/// matryona_machines::symbols! {
-///     Lights for Light as "a light" {
-///         Red => "red", Amber => "amber", Green => "green", Red => "rouge"
-///     }
-/// }
-/// ```
-///
-/// Nor a name given twice:
-///
-/// ```compile_fail
-/// enum Light { Red, Amber, Green }
-///
-/// matryona_machines::symbols! {
-///     Lights for Light as "a light" { Red => "red", Amber => "red", Green => "green" }
-/// }
-/// ```
-///
-/// The complete table does:
-///
-/// ```
-/// use matryona_machines::ruby::Symbols;
-///
-/// #[derive(Clone, Copy, Debug, PartialEq)]
-/// enum Light { Red, Amber, Green }
-///
-/// matryona_machines::symbols! {
-///     Lights for Light as "a light" { Red => "red", Amber => "amber", Green => "green" }
-/// }
-///
-/// assert_eq!(Lights::ALL, [Light::Red, Light::Amber, Light::Green]);
-/// assert_eq!(Lights::name(Light::Amber), "amber");
-/// ```
-#[macro_export]
-macro_rules! symbols {
-    (
-        $(#[$meta:meta])*
-        $vis:vis $table:ident for $enum:ty as $what:literal {
-            $($variant:ident => $name:literal),+ $(,)?
-        }
-    ) => {
-        $(#[$meta])*
-        #[derive(Clone, Copy, Debug)]
-        $vis struct $table;
-
-        const _: () = {
-            type MatryonaSymbolsEnum = $enum;
-
-            impl $crate::ruby::Symbols for $table {
-                type Variant = MatryonaSymbolsEnum;
-                const WHAT: &'static str = $what;
-                const ALL: &'static [MatryonaSymbolsEnum] = &[$(MatryonaSymbolsEnum::$variant),+];
-
-                fn name(variant: MatryonaSymbolsEnum) -> &'static str {
-                    match variant {
-                        $(MatryonaSymbolsEnum::$variant => $name,)+
-                    }
-                }
-            }
-
-            assert!(
-                $crate::ruby::distinct_variants(&[$(MatryonaSymbolsEnum::$variant as i128),+]),
-                "every variant in a symbols! table is listed once"
-            );
-            assert!(
-                $crate::ruby::valid_names(&[$($name),+]),
-                "every name in a symbols! table is distinct snake_case"
-            );
-        };
-    };
 }

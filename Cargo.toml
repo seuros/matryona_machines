@@ -35,7 +35,8 @@ ruby = ["dep:magnus"]
 testing = []
 
 [dependencies]
-magnus = { version = "0.9.3", default-features = false, optional = true }
+# `bytes` is for `RString::to_bytes`, the one safe copy of a String's bytes.
+magnus = { version = "0.9.3", default-features = false, features = ["bytes"], optional = true }
 
 [lints.rust]
 unsafe_code = "deny"

@@ -69,25 +69,38 @@ assert!(rng.below(6) < 6);
     pins a class the binding defined itself, with no lookup. `Registry<T>`
     is the static that holds a gem's classes and raises `RuntimeError` when
     read before init or set twice.
-  - `instance_of(value, class)` for any value, and `same_class(a, b)`: the
-    one exact-class check. The readers on it: `exact_struct` (and
-    `exact_struct_with`, its message built only on refusal),
-    `exact_fields::<N>` (a struct's fields as `[Value; N]`, no reader run),
-    `exact_array`, `exact_array_n::<N>`, and `exact_typed::<T>` for wrapped
-    Rust data, which refuses the subclass instance `Obj<T>`'s `TryConvert`
-    accepts.
+  - `instance_of(value, class)` for any value, `same_class(a, b)`, and
+    `which(value, &[classes])` (the index of the class it is exactly an
+    instance of): the one exact-class check. The readers on it:
+    `exact_struct`, `exact_fields::<N>` (a struct's fields as
+    `[Value; N]`, no reader run), `optional_fields::<N>` (nil or those
+    fields), `exact_array`, `exact_array_n::<N>`, `exact_string`, and
+    `exact_typed::<T>` for wrapped Rust data, which refuses the subclass
+    instance `Obj<T>`'s `TryConvert` accepts. The struct and typed readers
+    have `_with` twins (`exact_fields_with::<N>`, `exact_typed_with::<T>`,
+    ...) taking a closure (`Message`) run only on refusal, so a gem can
+    name the class it got without allocating on success.
   - `keep(ruby, receiver, &cell, decide, build)`: clone-then-keep.
-  - `integer::<T>(value, "name")`, `positive::<NonZero<T>>`,
-    `optional::<T>` (nil or an Integer), `duration` (`u64` nanoseconds),
-    `instant` (the whole `Duration` range), `nanoseconds(ruby, duration)`.
+  - `integer::<T>(value, "name")`, `integer_in(value, "name", lo..=hi)`,
+    `positive::<NonZero<T>>`, `optional::<T>` (nil or an Integer),
+    `optional_positive`, `duration` (`u64` nanoseconds), `instant` (the
+    whole `Duration` range), `nanoseconds(ruby, duration)`.
+  - `real(value, "name")` (exactly a Float or an Integer, as `f64`),
+    `finite` (also refusing NaN and the infinities), `boolean` (exactly
+    `true` or `false`), `bytes` and `utf8` (exactly a String, copied out
+    with no Ruby method run and no `unsafe`).
   - `symbol(ruby, "snake_case")` and `parse(ruby, value, what, ALL, name)`;
-    `symbols!` builds a `Symbols` table (`Table::symbol`, `Table::parse`)
-    whose variant list the compiler checks against the enum, the core's own
-    included.
+    `symbols!` builds a `Symbols` table (`Table::symbol`, `Table::parse`,
+    `Table::variant("name")`) whose variant list the compiler checks
+    against the enum, the core's own included; its `names_only` form
+    builds an output-only `SymbolNames` table for an enum whose variants
+    carry data (`Pinned { .. } => "pinned"`).
 
 ```rust,ignore
 use core::num::NonZero;
-use matryona_machines::ruby::{Symbols, exact_typed, instant, positive};
+use matryona_machines::ruby::{
+    Symbols, exact_typed, exact_typed_with, finite, instant, integer_in, positive, utf8,
+};
 use outbox_machines::Refusal;
 
 matryona_machines::symbols! {
@@ -101,6 +114,12 @@ matryona_machines::symbols! {
 let capacity: NonZero<u32> = positive(value, "capacity")?; // 0 and 2**32: 1..=4294967295
 let expires = instant(value, "expires")?;                  // past u64 nanoseconds
 let ticket: Obj<Ticket> = exact_typed(ruby, value, class, "expected a Ticket")?;
+let handle = exact_typed_with::<Handle>(ruby, value, class, || {
+    format!("handle must be a PoolMachines::Handle, not {}", value.class())
+})?;
+let max: usize = integer_in(value, "max", 0..=WAITER_CAPACITY)?; // "max must be in 0..=64"
+let gain = finite(value, "gain")?;                              // 1 and 0.5; not 1r, not NaN
+let key = utf8(value, "key")?;                                  // exactly a String, UTF-8 text
 let refusal = Refusals::parse(ruby, value)?;
 Ok(Refusals::symbol(ruby, refusal).as_value())
 ```
@@ -135,6 +154,25 @@ Ok(Refusals::symbol(ruby, refusal).as_value())
   `now + span`, enter over the whole `Duration` range (`instant`,
   `"<name> must be in 0..=Duration::MAX nanoseconds"`) and leave exact
   through `u128` (`nanoseconds`).
+- **Reals** are exactly a Float or an Integer, by type tag: a Rational,
+  a `BigDecimal`, a String or an object with `to_f` is `TypeError`
+  `"<name> must be a Float or Integer"`, and no `to_f` runs, a redefined
+  `Integer#to_f` included (magnus's own `f64` conversion would call it).
+  An Integer becomes the nearest `f64`, ties to even, which is what
+  Ruby's `Integer#to_f` answers: a Float is rounded already, so an
+  Integer is held to the same rule, and `10**17` means the real it reads
+  as. Past `f64::MAX` that is an infinity, as in Ruby. `real` passes NaN
+  and the infinities through; `finite` refuses them with `RangeError`
+  `"<name> must be finite"`. Booleans are exactly `true` or `false`
+  (`"<name> must be true or false"`), never truthiness.
+- **Strings** are exactly a String (`"<name> must be a String"`, a
+  subclass and a `to_str` object included), and their bytes are copied
+  with magnus's `RString::to_bytes` (its `bytes` feature): no `#bytes`, no
+  `#to_s`, no `unsafe`. `bytes` takes any encoding. `utf8` takes a UTF-8
+  String with valid bytes, or ASCII bytes in any ASCII-compatible encoding
+  (`"abc".b` is the text `abc`), and never transcodes: anything else is
+  `RangeError` `"<name> must be valid UTF-8"`, a binary `"caf\xC3\xA9".b`
+  and a UTF-16 String included.
 - **Symbols** come from the binding's exhaustive `match`; there is no
   catch-all. `parse` raises `TypeError` for a non-Symbol and `RangeError`
   listing every accepted Symbol. A `symbols!` table writes that `match`
@@ -143,7 +181,11 @@ Ok(Refusals::symbol(ruby, refusal).as_value())
   not build; a variant listed twice, a name given twice or a name that is
   not `snake_case` fails a `const` assertion. The table is a local unit
   struct implementing `Symbols`, so the enum may be the core's (no orphan
-  rule trouble).
+  rule trouble). The `names_only` form, for an enum with data variants,
+  writes the same exhaustive `match` from shapes (`Pinned { .. }`,
+  `Lease(..)`, `Full`) and has no `ALL` and no `parse`: such a variant
+  cannot be built from a name. A variant listed twice there is a duplicate
+  definition (`E0428`).
 - **Generators** are for tests: `below(0)` answers 0 rather than panic, and
   `XorShift64::new(0)` uses `ZERO_SEED`, since zero is the one state
   xorshift never leaves.

@@ -2,6 +2,10 @@
 mod exact;
 mod integers;
 mod keeping;
+mod ranges;
+mod readers;
+mod scalars;
+mod strings;
 mod symbols;
 
 use magnus::{Error, ExceptionClass, RModule, RStruct, Ruby, Value, prelude::*};
@@ -107,7 +111,18 @@ fn suite(ruby: &Ruby) -> Result<(), Error> {
     integers::integers(ruby)?;
     integers::wide(ruby)?;
     symbols::symbols(ruby)?;
-    symbols::table(ruby)
+    symbols::table(ruby)?;
+    symbols::variants();
+    symbols::names_only(ruby)?;
+    ranges::ranges(ruby)?;
+    ranges::optional_positives(ruby)?;
+    scalars::reals(ruby)?;
+    scalars::booleans(ruby)?;
+    strings::strings(ruby)?;
+    readers::lazy(ruby)?;
+    readers::optional(ruby)?;
+    readers::one_of(ruby)?;
+    readers::wrapped_subclass(ruby)
 }
 
 /// Fails while the VM is still up: magnus formats an error returned from
