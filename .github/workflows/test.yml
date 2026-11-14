@@ -1,0 +1,84 @@
+name: Test
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Dictator
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: seuros/setup-dictator@master
+        with:
+          version: '0.26.0'
+      - run: dictator lint --format github .
+
+  crates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          mise_toml: |
+            [tools]
+            rust = { version = "1.99", components = "clippy,rustfmt" }
+
+      - name: Lint the crate
+        run: |
+          cargo clippy --all-targets -- -D warnings
+          cargo clippy --all-targets --features testing -- -D warnings
+
+      - name: Test the crate
+        run: cargo test
+
+      - name: Run doc tests
+        run: cargo test --doc --features testing
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+  ruby:
+    name: Ruby feature (embedded VM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          mise_toml: |
+            [tools]
+            ruby = "4.0"
+            rust = { version = "1.99", components = "clippy" }
+
+      - name: Lint with the ruby feature
+        run: cargo clippy --workspace --all-targets --features ruby -- -D warnings
+
+      - name: Test inside a live Ruby
+        run: cargo test -p matryona-machines-embedded
+
+  bare-metal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          mise_toml: |
+            [tools]
+            rust = { version = "1.99", components = "clippy", targets = "thumbv7em-none-eabihf" }
+
+      - name: Build and lint on bare metal
+        run: |
+          cargo build --target thumbv7em-none-eabihf
+          cargo build --target thumbv7em-none-eabihf --features testing
+          cargo clippy --target thumbv7em-none-eabihf --features testing -- -D warnings

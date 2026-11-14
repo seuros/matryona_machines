@@ -1,0 +1,9 @@
+{
+  "packages": {
+    ".": {
+      "release-type": "rust",
+      "package-name": "matryona-machines",
+      "bump-minor-pre-major": true
+    }
+  }
+}

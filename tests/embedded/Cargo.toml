@@ -1,0 +1,42 @@
+[package]
+name = "matryona-machines-embedded"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+description = "Embedded-Ruby tests for matryona-machines' ruby feature"
+publish = false
+
+# Ruby must boot on the process's main thread, and only once, so the suite
+# is a plain `main` rather than libtest's threaded harness.
+[lib]
+path = "lib.rs"
+test = false
+doctest = false
+
+[[test]]
+name = "ruby"
+path = "ruby.rs"
+harness = false
+
+[dev-dependencies]
+matryona-machines = { path = "../..", features = ["ruby"] }
+# `embed` links libruby into the test binary only: this crate is never a
+# dependency, so no gem's extension is linked against it.
+magnus = { version = "0.9.3", default-features = false, features = ["embed"] }
+rb-sys = { version = "0.9.130", default-features = false, features = ["stable-api-compiled-fallback"] }
+
+[lints.rust]
+unsafe_code = "deny"
+unused_must_use = "warn"
+missing_docs = "warn"
+# A static libruby carries YJIT's own Rust runtime, so the test binary links
+# two `rust_eh_personality` symbols. Only this test crate links libruby.
+linker_messages = "allow"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"

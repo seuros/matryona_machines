@@ -1,0 +1,50 @@
+[package]
+name = "matryona-machines"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+description = "The glue every machines gem shares: pinned classes, exact-class reads, clone-then-keep, Integer and nanosecond converters, deterministic test RNGs"
+repository = "https://github.com/seuros/matryona_machines"
+readme = "README.md"
+exclude = [
+    "src/**/tests.rs",
+    "src/tests/",
+    "tests/",
+    ".github/",
+    ".dictate.toml",
+    ".gitignore",
+    "mise.toml",
+    "release-please-config.json",
+    ".release-please-manifest.json",
+]
+keywords = ["ruby", "magnus", "testing", "deterministic", "no-std"]
+categories = ["no-std", "development-tools::ffi", "development-tools::testing"]
+
+[workspace]
+members = [".", "tests/embedded"]
+default-members = ["."]
+resolver = "3"
+
+[features]
+default = []
+# The binding glue. Pulls `magnus` and with it `std`; never enable it in a core.
+ruby = ["dep:magnus"]
+# Deterministic RNGs and the refused-and-unchanged assertion for cores'
+# dev-dependencies. Stays `no_std`.
+testing = []
+
+[dependencies]
+magnus = { version = "0.9.3", default-features = false, optional = true }
+
+[lints.rust]
+unsafe_code = "deny"
+unused_must_use = "warn"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
