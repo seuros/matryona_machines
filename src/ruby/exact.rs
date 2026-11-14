@@ -56,7 +56,7 @@ use magnus::{
     RStruct, RTypedData, Ruby, Value, prelude::*, value::ReprValue,
 };
 
-use super::message::refusal;
+use super::message::{Message, refusal};
 
 /// Whether `a` and `b` are the same class, asked natively: `Module#<=` both
 /// ways through `rb_class_inherited_p`, the identity rule [`instance_of`]
@@ -180,9 +180,26 @@ pub fn exact_array(
     value: impl ReprValue,
     message: impl Into<Cow<'static, str>>,
 ) -> Result<RArray, Error> {
+    exact_array_with(ruby, value, || message)
+}
+
+/// [`exact_array`], building the message only when it refuses:
+///
+/// ```ignore
+/// let list = exact_array_with(ruby, value, || format!("{name} must be an Array"))?;
+/// ```
+///
+/// # Errors
+///
+/// `TypeError` when `value` is not exactly an `Array`.
+pub fn exact_array_with(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    message: impl Message,
+) -> Result<RArray, Error> {
     RArray::from_value(value.as_value())
         .filter(|held| instance_of(*held, ruby.class_array()))
-        .ok_or_else(|| refusal(ruby, || message))
+        .ok_or_else(|| refusal(ruby, message))
 }
 
 /// The `N` elements of exactly an `Array` (no subclass) of exactly `N`
@@ -201,8 +218,28 @@ pub fn exact_array_n<const N: usize>(
     value: impl ReprValue,
     message: impl Into<Cow<'static, str>>,
 ) -> Result<[Value; N], Error> {
-    let message = message.into();
-    exact_array(ruby, value, message.clone())?
-        .to_value_array::<N>()
-        .map_err(|_| refusal(ruby, || message))
+    exact_array_n_with(ruby, value, || message)
+}
+
+/// [`exact_array_n`], building the message only when it refuses (either
+/// way: not an Array, or another length).
+///
+/// ```ignore
+/// let weights = exact_array_n_with::<4>(ruby, value, || {
+///     format!("weights must be an Array of 4 Integers, not {}", value.inspect())
+/// })?;
+/// ```
+///
+/// # Errors
+///
+/// `TypeError` as [`exact_array_n`].
+pub fn exact_array_n_with<const N: usize>(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    message: impl Message,
+) -> Result<[Value; N], Error> {
+    RArray::from_value(value.as_value())
+        .filter(|held| held.len() == N && instance_of(*held, ruby.class_array()))
+        .and_then(|held| held.to_value_array::<N>().ok())
+        .ok_or_else(|| refusal(ruby, message))
 }

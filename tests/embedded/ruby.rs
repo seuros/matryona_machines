@@ -1,10 +1,13 @@
 //! Every `ruby` feature item, inside a live VM booted on the main thread.
+mod choices;
 mod exact;
 mod integers;
 mod keeping;
+mod lazy;
 mod ranges;
 mod readers;
 mod scalars;
+mod siblings;
 mod strings;
 mod symbols;
 
@@ -114,11 +117,19 @@ fn suite(ruby: &Ruby) -> Result<(), Error> {
     symbols::table(ruby)?;
     symbols::variants();
     symbols::names_only(ruby)?;
+    symbols::delegated(ruby)?;
     ranges::ranges(ruby)?;
     ranges::optional_positives(ruby)?;
     scalars::reals(ruby)?;
     scalars::booleans(ruby)?;
     strings::strings(ruby)?;
+    lazy::strings(ruby)?;
+    lazy::arrays(ruby)?;
+    choices::which_readers(ruby)?;
+    choices::units(ruby)?;
+    choices::no_units(ruby)?;
+    choices::symbol_or_class(ruby)?;
+    siblings::siblings(ruby)?;
     readers::lazy(ruby)?;
     readers::optional(ruby)?;
     readers::one_of(ruby)?;

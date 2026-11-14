@@ -2,10 +2,10 @@
 //! under a subclass.
 use std::cell::Cell;
 
-use magnus::{Class as _, Error, RClass, Ruby, TryConvert, prelude::*, typed_data::Obj};
+use magnus::{Class as _, Error, RClass, Ruby, TryConvert, Value, prelude::*, typed_data::Obj};
 use matryona_machines::ruby::{
     exact_fields, exact_fields_with, exact_typed, exact_typed_with, optional_fields,
-    optional_fields_with, which,
+    optional_fields_with, optional_typed, optional_typed_with, which,
 };
 
 use crate::{CLASSES, eval, raises};
@@ -175,6 +175,41 @@ pub fn wrapped_subclass(ruby: &Ruby) -> Result<(), Error> {
         format!("ticket must be a Fixture::Ticket, not {}", child.class())
     });
     raises(lazy, type_error, "not #<Class:#<Fixture::SubTicket");
+    // nil, or exactly the wrapped class: the subclass instances stay out.
+    let maybe = |value: Value| optional_typed::<Ticket>(ruby, value, ticket, "nil or a Ticket");
+    assert!(maybe(ruby.qnil().as_value())?.is_none());
+    let held = maybe(genuine.as_value())?.unwrap_or_else(|| panic!("a ticket"));
+    assert_eq!(held.0, 1);
+    for value in [
+        ruby.obj_wrap_as(Ticket(6), named).as_value(),
+        ruby.qfalse().as_value(),
+        eval(ruby, "Object.new")?,
+    ] {
+        raises(
+            maybe(value).map(|held| held.map(|t| t.0)),
+            type_error,
+            "nil or a Ticket",
+        );
+        let lazy = optional_typed_with::<Ticket>(ruby, value, ticket, || {
+            format!("replacing must be a Ticket or nil, not {}", value.class())
+        });
+        raises(
+            lazy.map(|held| held.map(|t| t.0)),
+            type_error,
+            "replacing must be a Ticket or nil, not ",
+        );
+    }
+    let built = Cell::new(false);
+    let none = optional_typed_with::<Ticket>(ruby, ruby.qnil(), ticket, || {
+        built.set(true);
+        "never"
+    })?;
+    assert!(none.is_none() && !built.get());
+    let some = optional_typed_with::<Ticket>(ruby, genuine, ticket, || {
+        built.set(true);
+        "never"
+    })?;
+    assert!(some.is_some_and(|held| held.0 == 1) && !built.get());
     // A wrong-type value names its class plainly.
     let integer = eval(ruby, "7")?;
     let plain = exact_typed_with::<Ticket>(ruby, integer, ticket, || {

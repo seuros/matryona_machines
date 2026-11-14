@@ -36,7 +36,10 @@ use magnus::{
     value::ReprValue,
 };
 
-use super::{exact::instance_of, message::refusal};
+use super::{
+    exact::instance_of,
+    message::{Message, refusal},
+};
 
 /// `value` as an `RString` that is exactly a String: no subclass, no
 /// `to_str` conversion.
@@ -52,9 +55,31 @@ use super::{exact::instance_of, message::refusal};
 ///
 /// `TypeError` as above.
 pub fn exact_string(ruby: &Ruby, value: impl ReprValue, name: &str) -> Result<RString, Error> {
+    exact_string_with(ruby, value, || {
+        Cow::Owned(format!("{name} must be a String"))
+    })
+}
+
+/// [`exact_string`] with the whole `TypeError` message built only when it
+/// refuses, so a gem can name the class it got:
+///
+/// ```ignore
+/// let key = exact_string_with(ruby, value, || {
+///     format!("a key must be a String, not {}", value.class())
+/// })?;
+/// ```
+///
+/// # Errors
+///
+/// `TypeError` with `message` when `value` is not exactly a String.
+pub fn exact_string_with(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    message: impl Message,
+) -> Result<RString, Error> {
     RString::from_value(value.as_value())
         .filter(|held| instance_of(*held, ruby.class_string()))
-        .ok_or_else(|| refusal(ruby, || Cow::Owned(format!("{name} must be a String"))))
+        .ok_or_else(|| refusal(ruby, message))
 }
 
 /// The bytes of exactly a String, in whatever encoding it has, copied out
@@ -68,8 +93,21 @@ pub fn exact_string(ruby: &Ruby, value: impl ReprValue, name: &str) -> Result<RS
 ///
 /// `TypeError` `"<name> must be a String"`, as [`exact_string`].
 pub fn bytes(value: Value, name: &str) -> Result<Vec<u8>, Error> {
+    bytes_with(value, || Cow::Owned(format!("{name} must be a String")))
+}
+
+/// [`bytes`] with the `TypeError` message built only when it refuses.
+///
+/// ```ignore
+/// let item = bytes_with(value, || format!("item must be a String, not {}", value.class()))?;
+/// ```
+///
+/// # Errors
+///
+/// `TypeError` with `message` when `value` is not exactly a String.
+pub fn bytes_with(value: Value, message: impl Message) -> Result<Vec<u8>, Error> {
     let ruby = Ruby::get_with(value);
-    Ok(exact_string(&ruby, value, name)?.to_bytes().into())
+    Ok(exact_string_with(&ruby, value, message)?.to_bytes().into())
 }
 
 /// The text of exactly a String that is UTF-8 text, copied out natively.
@@ -88,8 +126,28 @@ pub fn bytes(value: Value, name: &str) -> Result<Vec<u8>, Error> {
 ///
 /// `TypeError` or `RangeError` as above.
 pub fn utf8(value: Value, name: &str) -> Result<String, Error> {
+    utf8_with(value, name, || {
+        Cow::Owned(format!("{name} must be a String"))
+    })
+}
+
+/// [`utf8`] with the `TypeError` message built only when it refuses.
+///
+/// `name` still names the argument in the `RangeError` `"<name> must be
+/// valid UTF-8"`: that refusal is about a String's bytes, so there is no
+/// other class to name, and a message about the type would be wrong there.
+///
+/// ```ignore
+/// let key = utf8_with(value, "key", || format!("key must be a String, not {}", value.class()))?;
+/// ```
+///
+/// # Errors
+///
+/// `TypeError` with `message` when `value` is not exactly a String;
+/// `RangeError` as [`utf8`].
+pub fn utf8_with(value: Value, name: &str, message: impl Message) -> Result<String, Error> {
     let ruby = Ruby::get_with(value);
-    let string = exact_string(&ruby, value, name)?;
+    let string = exact_string_with(&ruby, value, message)?;
     let text = string.enc_get() == ruby.utf8_encindex()
         || string.enc_coderange_scan() == Coderange::SevenBit;
     if text && let Ok(text) = String::from_utf8(string.to_bytes().into()) {

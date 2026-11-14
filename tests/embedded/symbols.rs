@@ -2,7 +2,7 @@
 use core::cmp::Ordering;
 
 use magnus::{Error, Ruby, Symbol, prelude::*};
-use matryona_machines::ruby::{SymbolNames, Symbols, parse, symbol};
+use matryona_machines::ruby::{Named, SymbolNames, Symbols, parse, symbol};
 
 use crate::{eval, raises};
 
@@ -134,6 +134,114 @@ pub fn names_only(ruby: &Ruby) -> Result<(), Error> {
     }
     if let Refusal::Lease(a, b) = lease {
         assert!(a < b);
+    }
+    Ok(())
+}
+
+/// A sibling's refusal, carried whole, as election's `Lease` variant is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum LeaseRefusal {
+    Held,
+    Expired,
+}
+
+matryona_machines::symbols! {
+    /// The sibling's own table.
+    LeaseRefusals for LeaseRefusal as "a lease refusal" {
+        Held => "held",
+        Expired => "expired",
+    }
+}
+
+/// A reason with data of its own, so its table is `names_only` too.
+#[derive(Debug)]
+enum Mismatch {
+    Depth(u8),
+    Fanout,
+}
+
+matryona_machines::symbols! {
+    /// A names-only inner table.
+    Mismatches for Mismatch as "a mismatch" => names_only {
+        Depth(..) => "depth_mismatch",
+        Fanout => "fanout_mismatch",
+    }
+}
+
+/// Wraps both: one Symbol space across three tables.
+#[derive(Debug)]
+enum Wrapping {
+    NoCandidates,
+    Lease(LeaseRefusal),
+    Pinned { by: u8 },
+    Schema(Mismatch),
+}
+
+matryona_machines::symbols! {
+    /// Delegates two variants.
+    Wrappings for Wrapping as "a refusal" => names_only {
+        NoCandidates => "no_candidates",
+        Lease(carried) => use LeaseRefusals,
+        Pinned { .. } => "pinned",
+        Schema(reason) => use Mismatches,
+    }
+}
+
+pub fn delegated(ruby: &Ruby) -> Result<(), Error> {
+    let lease = Wrapping::Lease(LeaseRefusal::Expired);
+    assert_eq!(Wrappings::name(&lease), "expired");
+    assert_eq!(
+        Wrappings::name(&Wrapping::Lease(LeaseRefusal::Held)),
+        "held"
+    );
+    assert_eq!(
+        Wrappings::name(&Wrapping::Schema(Mismatch::Depth(2))),
+        "depth_mismatch"
+    );
+    assert_eq!(
+        Wrappings::name(&Wrapping::Schema(Mismatch::Fanout)),
+        "fanout_mismatch"
+    );
+    assert_eq!(Wrappings::name(&Wrapping::Pinned { by: 1 }), "pinned");
+    assert_eq!(Wrappings::name(&Wrapping::NoCandidates), "no_candidates");
+    assert_eq!(
+        Wrappings::NAMES,
+        [
+            "no_candidates",
+            "held",
+            "expired",
+            "pinned",
+            "depth_mismatch",
+            "fanout_mismatch"
+        ]
+    );
+    assert_eq!(Wrappings::EVERY_NAME, Wrappings::NAMES);
+    // Delegated variants stay output only.
+    assert_eq!(Wrappings::UNIT_NAMES, ["no_candidates"]);
+    assert!(Wrappings::variant("expired").is_none());
+    assert!(Wrappings::variant("no_candidates").is_some());
+    raises(
+        Wrappings::parse_unit(ruby, eval(ruby, ":held")?).map(|_| ()),
+        ruby.exception_range_error(),
+        "a refusal must be one of :no_candidates",
+    );
+    let made = Wrappings::symbol(ruby, &lease);
+    assert!(made.equal(ruby.eval::<Symbol>(":expired")?)?);
+
+    // Every table is `Named`, either form, the names by reference.
+    assert_eq!(LeaseRefusals::EVERY_NAME, ["held", "expired"]);
+    assert_eq!(LeaseRefusals::name_of(&LeaseRefusal::Held), "held");
+    assert_eq!(Mismatches::EVERY_NAME, Mismatches::NAMES);
+    assert_eq!(Mismatches::name_of(&Mismatch::Fanout), "fanout_mismatch");
+    assert_eq!(States::EVERY_NAME, ["pending", "time_regression"]);
+    assert_eq!(Refusals::name_of(&Refusal::Full), "full");
+    for value in [
+        Wrapping::Pinned { by: 4 },
+        Wrapping::Schema(Mismatch::Depth(4)),
+    ] {
+        if let Wrapping::Pinned { by } | Wrapping::Schema(Mismatch::Depth(by)) = value {
+            assert_eq!(by, 4);
+        }
     }
     Ok(())
 }

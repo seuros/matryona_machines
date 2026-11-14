@@ -79,7 +79,27 @@ assert!(rng.below(6) < 6);
     instance `Obj<T>`'s `TryConvert` accepts. The struct and typed readers
     have `_with` twins (`exact_fields_with::<N>`, `exact_typed_with::<T>`,
     ...) taking a closure (`Message`) run only on refusal, so a gem can
-    name the class it got without allocating on success.
+    name the class it got without allocating on success; so do the
+    String and Array readers (`exact_string_with`, `bytes_with`,
+    `utf8_with(value, name, message)`, `exact_array_with`,
+    `exact_array_n_with::<N>`). `optional_typed::<T>` is nil or
+    `exact_typed`.
+  - `which_fields::<N>(ruby, value, &[classes], message)`: which class,
+    and its fields, in one exact-class check (`optional_which_fields`
+    also takes nil). `which_struct` answers `(index, ExactStruct)` for
+    classes of different lengths; `ExactStruct::fields::<N>` reads it
+    with no second class check.
+  - `symbol_or_fields(ruby, value, Table, &[classes], message)` reads a
+    mixed enum's argument, a unit variant's Symbol or exactly one of the
+    data classes, as `Choice::Symbol(variant)` or
+    `Choice::Struct(index, [fields])`; `symbol_or_struct` answers an
+    `ExactStruct` instead. `RangeError` for any other Symbol, `TypeError`
+    for any other value, both with the caller's message.
+  - `own_or_sibling::<N>(ruby, value, own, ["readers"], message)`: the
+    gem's own class read from the struct, a sibling gem's value through
+    its public readers, a subclass of the own class refused. The sibling
+    path runs Ruby, so it belongs with the other conversions, before any
+    core call.
   - `keep(ruby, receiver, &cell, decide, build)`: clone-then-keep.
   - `integer::<T>(value, "name")`, `integer_in(value, "name", lo..=hi)`,
     `positive::<NonZero<T>>`, `optional::<T>` (nil or an Integer),
@@ -93,13 +113,18 @@ assert!(rng.below(6) < 6);
     `symbols!` builds a `Symbols` table (`Table::symbol`, `Table::parse`,
     `Table::variant("name")`) whose variant list the compiler checks
     against the enum, the core's own included; its `names_only` form
-    builds an output-only `SymbolNames` table for an enum whose variants
-    carry data (`Pinned { .. } => "pinned"`).
+    builds a `SymbolNames` table for an enum whose variants carry data
+    (`Pinned { .. } => "pinned"`): every variant out, the unit ones
+    (written as a bare name) back in through `Table::parse_unit` and
+    `Table::variant`, and a wrapping variant answered under its payload's
+    table (`Lease(inner) => use LeaseRefusals`). Every table is `Named`
+    (`EVERY_NAME`, `name_of(&variant)`).
 
 ```rust,ignore
 use core::num::NonZero;
 use matryona_machines::ruby::{
-    Symbols, exact_typed, exact_typed_with, finite, instant, integer_in, positive, utf8,
+    Choice, Symbols, duration, exact_typed, exact_typed_with, finite, instant, integer_in,
+    positive, symbol_or_fields, utf8,
 };
 use outbox_machines::Refusal;
 
@@ -121,6 +146,10 @@ let max: usize = integer_in(value, "max", 0..=WAITER_CAPACITY)?; // "max must be
 let gain = finite(value, "gain")?;                              // 1 and 0.5; not 1r, not NaN
 let key = utf8(value, "key")?;                                  // exactly a String, UTF-8 text
 let refusal = Refusals::parse(ruby, value)?;
+let fault = match symbol_or_fields(ruby, value, Faults, &[delay], "a fault is :raise or a Delay")? {
+    Choice::Symbol(fault) => fault,                           // a unit arm of Faults' names_only table
+    Choice::Struct(_, [span]) => Fault::Delay(duration(span, "span")?),
+};
 Ok(Refusals::symbol(ruby, refusal).as_value())
 ```
 
@@ -183,9 +212,19 @@ Ok(Refusals::symbol(ruby, refusal).as_value())
   struct implementing `Symbols`, so the enum may be the core's (no orphan
   rule trouble). The `names_only` form, for an enum with data variants,
   writes the same exhaustive `match` from shapes (`Pinned { .. }`,
-  `Lease(..)`, `Full`) and has no `ALL` and no `parse`: such a variant
-  cannot be built from a name. A variant listed twice there is a duplicate
-  definition (`E0428`).
+  `Lease(..)`, `Full`) and has no `ALL` and no `parse`: a data variant
+  cannot be built from a name. Its bare-name arms are the unit variants,
+  and `parse_unit` reads exactly those back; a data variant written as a
+  bare name does not compile (`E0533`). An arm `Lease(inner) => use
+  Table` answers under the inner table's names, and `NAMES` is the
+  union, asserted distinct at compile time across every table involved;
+  a table for another type than the payload is `E0308`. A variant listed
+  twice there is a duplicate definition (`E0428`).
+- **Sibling values** are read by their public readers only when the value
+  is not the gem's own class or a subclass of it; every reader is asked
+  for before any is called. That path runs Ruby (`respond_to?` when
+  redefined, and each reader), so it happens while converting arguments,
+  before any core call and with no borrow held.
 - **Generators** are for tests: `below(0)` answers 0 rather than panic, and
   `XorShift64::new(0)` uses `ZERO_SEED`, since zero is the one state
   xorshift never leaves.

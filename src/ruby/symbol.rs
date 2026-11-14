@@ -42,10 +42,21 @@ pub fn parse<T: Copy>(
         .copied()
         .find(|variant| name(*variant) == given)
         .ok_or_else(|| {
-            let names: Vec<String> = all.iter().map(|v| format!(":{}", name(*v))).collect();
-            let message = format!("{what} must be one of {}", names.join(", "));
-            Error::new(ruby.exception_range_error(), message)
+            let names: Vec<&str> = all.iter().map(|v| name(*v)).collect();
+            not_one_of(ruby, what, &names)
         })
+}
+
+/// `RangeError` `"<what> must be one of :a, :b"`, or, with no names at all,
+/// `"<what> is never read from a Symbol"`.
+fn not_one_of(ruby: &Ruby, what: &str, names: &[&str]) -> Error {
+    let message = if names.is_empty() {
+        format!("{what} is never read from a Symbol")
+    } else {
+        let names: Vec<String> = names.iter().map(|name| format!(":{name}")).collect();
+        format!("{what} must be one of {}", names.join(", "))
+    };
+    Error::new(ruby.exception_range_error(), message)
 }
 
 /// A unit-variant enum's Symbol table.
@@ -101,9 +112,11 @@ pub trait Symbols {
 /// as its Symbol.
 ///
 /// Such a variant cannot be built from its name, so there is no `ALL` and
-/// no `parse`; refusals leave as Symbols and never come back. Generate it
-/// with the `names_only` form of [`symbols!`](crate::symbols), which proves
-/// the `match` covers every variant.
+/// no `parse`: a data variant leaves as its Symbol and never comes back.
+/// The unit variants of the same enum can, and
+/// [`SymbolNames::parse_unit`] reads exactly those. Generate it with the
+/// `names_only` form of [`symbols!`](crate::symbols), which proves the
+/// `match` covers every variant and lists the unit ones.
 pub trait SymbolNames {
     /// The enum, typically the core's.
     type Variant;
@@ -121,6 +134,99 @@ pub trait SymbolNames {
     fn symbol(ruby: &Ruby, variant: &Self::Variant) -> Symbol {
         symbol(ruby, Self::name(variant))
     }
+
+    /// The names of the unit variants, the only ones a name can build, in
+    /// the table's order. A `symbols!` table lists every arm written as a
+    /// bare name (`Granted => "granted"`); a hand-written impl that does not
+    /// override it has none.
+    const UNIT_NAMES: &'static [&'static str] = &[];
+
+    /// The unit variant named `name`, or `None`, a data variant's name
+    /// included: the lookup [`SymbolNames::parse_unit`] does.
+    ///
+    /// ```ignore
+    /// let granted = Votes::variant("granted"); // Some(Vote::Granted)
+    /// let denied = Votes::variant("denied");   // None: a Denied carries a reason
+    /// ```
+    #[must_use]
+    fn variant(name: &str) -> Option<Self::Variant> {
+        let _ = name;
+        None
+    }
+
+    /// The unit variant the Symbol `value` names.
+    ///
+    /// # Errors
+    ///
+    /// `TypeError` `"<WHAT> must be a Symbol"` for a non-Symbol,
+    /// `RangeError` `"<WHAT> must be one of :a, :b"` listing
+    /// [`SymbolNames::UNIT_NAMES`] for any other Symbol, a data variant's
+    /// name included.
+    fn parse_unit(ruby: &Ruby, value: Value) -> Result<Self::Variant, Error> {
+        let Some(symbol) = Symbol::from_value(value) else {
+            let message = format!("{} must be a Symbol", Self::WHAT);
+            return Err(Error::new(ruby.exception_type_error(), message));
+        };
+        Self::variant(&symbol.name()?).ok_or_else(|| not_one_of(ruby, Self::WHAT, Self::UNIT_NAMES))
+    }
+}
+
+/// Every table [`symbols!`](crate::symbols) writes, either form: the names
+/// it can answer and a variant's name seen by reference.
+///
+/// A `names_only` table delegates a wrapping variant to another table
+/// through it (`Lease(inner) => use LeaseRefusals`), so the inner table
+/// may be a [`Symbols`] table, whose variants are `Copy`, or another
+/// [`SymbolNames`] table. Its items are named apart from those two traits'
+/// so that importing it beside either is never ambiguous.
+pub trait Named {
+    /// The enum, typically the core's.
+    type Enum;
+    /// Every name the table can answer, a delegated table's included, in
+    /// the table's order.
+    const EVERY_NAME: &'static [&'static str];
+
+    /// The variant's Symbol name.
+    fn name_of(variant: &Self::Enum) -> &'static str;
+}
+
+/// The `N` names of `parts`, in order. A `names_only` table that delegates
+/// builds its `NAMES` with it, then asserts them distinct.
+///
+/// # Panics
+///
+/// At compile time, when `N` is not the parts' total length (the macro
+/// computes `N` from the same parts, so it never is).
+#[doc(hidden)]
+#[must_use]
+pub const fn joined_names<const N: usize>(parts: &[&[&'static str]]) -> [&'static str; N] {
+    let mut out = [""; N];
+    let mut at = 0;
+    let mut part = 0;
+    while part < parts.len() {
+        let mut i = 0;
+        while i < parts[part].len() {
+            out[at] = parts[part][i];
+            at += 1;
+            i += 1;
+        }
+        part += 1;
+    }
+    assert!(at == N, "joined_names: N is the parts' total length");
+    out
+}
+
+/// The total length of `parts`, the `N` of [`joined_names`].
+#[doc(hidden)]
+#[must_use]
+pub const fn joined_len(parts: &[&[&'static str]]) -> usize {
+    let mut total = 0;
+    let mut part = 0;
+    while part < parts.len() {
+        total += parts[part].len();
+        part += 1;
+    }
+    total
 }
 
 /// Whether every name is a lowercase `snake_case` Symbol name

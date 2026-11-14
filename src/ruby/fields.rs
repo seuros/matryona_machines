@@ -57,9 +57,18 @@ pub fn exact_fields_with<const N: usize>(
     else {
         return Err(refusal(ruby, message));
     };
+    struct_fields(ruby, fields)
+}
+
+/// The first `N` fields of `held`, read from the struct; the caller has
+/// checked its class and that it has `N` members.
+pub(super) fn struct_fields<const N: usize>(
+    ruby: &Ruby,
+    held: RStruct,
+) -> Result<[Value; N], Error> {
     let mut out = [ruby.qnil().as_value(); N];
     for (index, slot) in out.iter_mut().enumerate() {
-        *slot = fields.aref(index)?;
+        *slot = held.aref(index)?;
     }
     Ok(out)
 }
@@ -148,4 +157,41 @@ pub fn exact_typed_with<T: TypedData>(
         return Ok(held);
     }
     Err(refusal(ruby, message))
+}
+
+/// `nil` as `None`, anything else as [`exact_typed`] reads it: for an
+/// optional wrapped argument (a replacement that may be absent).
+///
+/// ```ignore
+/// let replacing = optional_typed::<Replacement>(ruby, value, class,
+///     "replacing must be a JournalMachines::Replacement or nil")?;
+/// ```
+///
+/// # Errors
+///
+/// `TypeError` as [`exact_typed`], for a value that is not `nil`.
+pub fn optional_typed<T: TypedData>(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    class: RClass,
+    message: impl Into<Cow<'static, str>>,
+) -> Result<Option<Obj<T>>, Error> {
+    optional_typed_with(ruby, value, class, || message)
+}
+
+/// [`optional_typed`], building the message only when it refuses.
+///
+/// # Errors
+///
+/// `TypeError` as [`exact_typed`], for a value that is not `nil`.
+pub fn optional_typed_with<T: TypedData>(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    class: RClass,
+    message: impl Message,
+) -> Result<Option<Obj<T>>, Error> {
+    if value.is_nil() {
+        return Ok(None);
+    }
+    exact_typed_with(ruby, value, class, message).map(Some)
 }

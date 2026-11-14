@@ -16,10 +16,22 @@
 //!   itself. [`which`] asks it of several classes at once. The readers
 //!   built on it: [`exact_struct`], [`exact_fields`], [`optional_fields`]
 //!   (nil or the struct), [`exact_array`], [`exact_array_n`],
-//!   [`exact_string`] and, for wrapped Rust data, [`exact_typed`]. Each
-//!   struct and typed reader has a `_with` twin ([`exact_struct_with`],
-//!   [`exact_fields_with`], [`optional_fields_with`], [`exact_typed_with`])
-//!   whose [`Message`] is built only on refusal.
+//!   [`exact_string`] and, for wrapped Rust data, [`exact_typed`] and
+//!   [`optional_typed`] (nil or the typed value). Every reader that takes
+//!   a message has a `_with` twin ([`exact_struct_with`],
+//!   [`exact_fields_with`], [`exact_typed_with`], [`exact_array_with`],
+//!   [`exact_string_with`], [`bytes_with`], [`utf8_with`], ...) whose
+//!   [`Message`] is built only on refusal.
+//! - **One of several classes, or a Symbol.** [`which_fields`] is
+//!   [`which`] and the field read in one check ([`optional_which_fields`]
+//!   for nil too); [`which_struct`] answers an [`ExactStruct`] for classes
+//!   of different lengths. [`symbol_or_fields`] and [`symbol_or_struct`]
+//!   read a mixed enum's argument, a unit variant's Symbol (from its
+//!   `names_only` table) or one of its data classes, as a [`Choice`].
+//! - **A sibling gem's value by its readers.** [`own_or_sibling`] reads the
+//!   gem's own class from the struct and anything else through the public
+//!   readers named, refusing a subclass of its own class. That path runs
+//!   Ruby: call it while converting arguments, before the core.
 //! - **The binding never loses work.** [`keep`] is clone-then-keep: decide on
 //!   a copy, build the answer with no `RefCell` borrow held, re-check frozen
 //!   (`FrozenError`) and unchanged (`RuntimeError`), and only then store.
@@ -37,8 +49,12 @@
 //! - **Refusals are symbols.** [`symbol`] turns a refusal's `snake_case`
 //!   name into its Symbol; [`parse`] reads a Symbol back into a variant.
 //!   [`symbols!`] builds a [`Symbols`] table whose variant list the compiler
-//!   checks against the enum, or, for an enum with data variants, an
-//!   output-only [`SymbolNames`] table.
+//!   checks against the enum, or, for an enum with data variants, a
+//!   [`SymbolNames`] table: every variant out, the unit ones back in
+//!   ([`SymbolNames::parse_unit`]), and a wrapping variant answered under
+//!   its payload's own table (`Lease(inner) => use LeaseRefusals`). Every
+//!   table is [`Named`].
+mod choice;
 mod classes;
 mod exact;
 mod fields;
@@ -46,18 +62,24 @@ mod integer;
 mod keep;
 mod message;
 mod scalar;
+mod sibling;
 mod string;
 mod symbol;
 mod table;
+mod which;
 
 pub use crate::symbols;
+pub use choice::{
+    Choice, symbol_or_fields, symbol_or_fields_with, symbol_or_struct, symbol_or_struct_with,
+};
 pub use classes::{Class, Registry};
 pub use exact::{
-    exact_array, exact_array_n, exact_struct, exact_struct_with, instance_of, same_class, which,
+    exact_array, exact_array_n, exact_array_n_with, exact_array_with, exact_struct,
+    exact_struct_with, instance_of, same_class, which,
 };
 pub use fields::{
     exact_fields, exact_fields_with, exact_typed, exact_typed_with, optional_fields,
-    optional_fields_with,
+    optional_fields_with, optional_typed, optional_typed_with,
 };
 pub use integer::{
     Bounded, Positive, duration, instant, integer, integer_in, nanoseconds, optional,
@@ -66,7 +88,12 @@ pub use integer::{
 pub use keep::keep;
 pub use message::Message;
 pub use scalar::{boolean, finite, real};
-pub use string::{bytes, exact_string, utf8};
-pub use symbol::{SymbolNames, Symbols, parse, symbol};
+pub use sibling::{own_or_sibling, own_or_sibling_with};
+pub use string::{bytes, bytes_with, exact_string, exact_string_with, utf8, utf8_with};
+pub use symbol::{Named, SymbolNames, Symbols, parse, symbol};
 #[doc(hidden)]
-pub use symbol::{distinct_variants, valid_names};
+pub use symbol::{distinct_variants, joined_len, joined_names, valid_names};
+pub use which::{
+    ExactStruct, optional_which_fields, optional_which_fields_with, which_fields,
+    which_fields_with, which_struct, which_struct_with,
+};
