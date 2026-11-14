@@ -51,7 +51,10 @@ jobs:
 
   ruby:
     name: Ruby feature (embedded VM)
-    runs-on: ubuntu-latest
+    # The test binary links a static libruby, which carries YJIT's own Rust
+    # runtime: Linux linkers reject the duplicate `rust_eh_personality`, the
+    # macOS linker only warns. Gems never link libruby, so this binds only here.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
