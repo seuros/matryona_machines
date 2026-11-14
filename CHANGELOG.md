@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/seuros/matryona_machines/compare/matryona-machines-v0.2.0...matryona-machines-v0.3.0) (2026-11-14)
+
+
+### Features
+
+* lazy-message exact readers, real/finite/boolean/integer_in/optional readers, which, Symbols::variant, names-only symbol tables for data variants, and exact String readers ([df63af2](https://github.com/seuros/matryona_machines/commit/df63af29b381563cac9f28e287ca27873da31d5e))
+
 ## [0.2.0](https://github.com/seuros/matryona_machines/compare/matryona-machines-v0.1.0...matryona-machines-v0.2.0) (2026-11-14)
 
 
