@@ -1,7 +1,7 @@
 //! Refusals and other enums as Symbols.
 use std::{format, string::String, vec::Vec};
 
-use magnus::{Error, Ruby, Symbol, Value};
+use magnus::{Error, RArray, Ruby, Symbol, Value, prelude::*};
 
 /// The Symbol a refusal travels as, from its variant's `snake_case` name.
 ///
@@ -37,14 +37,20 @@ pub fn parse<T: Copy>(
         let message = format!("{what} must be a Symbol");
         return Err(Error::new(ruby.exception_type_error(), message));
     };
-    let given = symbol.name()?;
-    all.iter()
-        .copied()
-        .find(|variant| name(*variant) == given)
-        .ok_or_else(|| {
-            let names: Vec<&str> = all.iter().map(|v| name(*v)).collect();
-            not_one_of(ruby, what, &names)
-        })
+    lookup(symbol, |given| {
+        all.iter().copied().find(|variant| name(*variant) == given)
+    })
+    .ok_or_else(|| {
+        let names: Vec<&str> = all.iter().map(|v| name(*v)).collect();
+        not_one_of(ruby, what, &names)
+    })
+}
+
+/// The variant `find` gives for `symbol`'s name, or `None`. A Symbol whose
+/// name is not valid UTF-8 can name no table entry, so it is `None` (the
+/// caller's `RangeError`), never magnus's `EncodingError`.
+pub(super) fn lookup<V>(symbol: Symbol, find: impl FnOnce(&str) -> Option<V>) -> Option<V> {
+    symbol.name().ok().and_then(|name| find(&name))
 }
 
 /// `RangeError` `"<what> must be one of :a, :b"`, or, with no names at all,
@@ -97,6 +103,15 @@ pub trait Symbols {
             .find(|variant| Self::name(*variant) == name)
     }
 
+    /// Every variant's Symbol, in `ALL`'s order, as a frozen Array: what a
+    /// gem publishes as a constant (`REFUSALS`, `CLOCK_POLICIES`).
+    #[must_use]
+    fn every(ruby: &Ruby) -> RArray {
+        let list = ruby.ary_from_iter(Self::ALL.iter().map(|variant| Self::symbol(ruby, *variant)));
+        list.freeze();
+        list
+    }
+
     /// The variant the Symbol `value` names: [`parse`] over `ALL`.
     ///
     /// # Errors
@@ -135,6 +150,36 @@ pub trait SymbolNames {
         symbol(ruby, Self::name(variant))
     }
 
+    /// Every name in [`SymbolNames::NAMES`] as a Symbol, in the table's
+    /// order, as a frozen Array: what a gem publishes as a constant
+    /// (`REFUSALS`), the output-only twin of [`Symbols::every`].
+    #[must_use]
+    fn every(ruby: &Ruby) -> RArray {
+        let list = ruby.ary_from_iter(Self::NAMES.iter().map(|name| symbol(ruby, name)));
+        list.freeze();
+        list
+    }
+
+    /// The variant, taken by value, as its Symbol: for a unit variant
+    /// written where its Symbol is answered, with no binding to borrow.
+    ///
+    /// The name comes from the same exhaustive `match` as
+    /// [`SymbolNames::symbol`], so a renamed or removed variant still does
+    /// not compile. A data variant passed here is consumed; prefer
+    /// [`SymbolNames::symbol`] for one you hold.
+    ///
+    /// ```ignore
+    /// match admitted {
+    ///     Ok(Admission::Buffered) => Ok(Admissions::symbol_of(ruby, Admission::Buffered).as_value()),
+    ///     Ok(Admission::Flush(due)) => flush.funcall("new", (reason(ruby, due),)),
+    ///     Err(refused) => Ok(refusal(ruby, refused)),
+    /// }
+    /// ```
+    #[must_use]
+    fn symbol_of(ruby: &Ruby, variant: Self::Variant) -> Symbol {
+        Self::symbol(ruby, &variant)
+    }
+
     /// The names of the unit variants, the only ones a name can build, in
     /// the table's order. A `symbols!` table lists every arm written as a
     /// bare name (`Granted => "granted"`); a hand-written impl that does not
@@ -167,7 +212,7 @@ pub trait SymbolNames {
             let message = format!("{} must be a Symbol", Self::WHAT);
             return Err(Error::new(ruby.exception_type_error(), message));
         };
-        Self::variant(&symbol.name()?).ok_or_else(|| not_one_of(ruby, Self::WHAT, Self::UNIT_NAMES))
+        lookup(symbol, Self::variant).ok_or_else(|| not_one_of(ruby, Self::WHAT, Self::UNIT_NAMES))
     }
 }
 

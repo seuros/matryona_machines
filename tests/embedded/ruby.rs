@@ -1,11 +1,15 @@
 //! Every `ruby` feature item, inside a live VM booted on the main thread.
 mod choices;
+mod duck;
 mod exact;
+mod fencing;
 mod integers;
 mod keeping;
 mod lazy;
+mod numbers;
 mod ranges;
 mod readers;
+mod reasons;
 mod scalars;
 mod siblings;
 mod strings;
@@ -60,17 +64,24 @@ end
 ";
 
 fn registry(ruby: &Ruby, module: RModule) -> Result<(), Error> {
-    let runtime = ruby.exception_runtime_error();
+    // Read before init: the extension loaded without its gem, the
+    // load-time missing-constant case, so NameError.
+    let name_error = ruby.exception_name_error();
     raises(
         CLASSES.get(ruby).map(|_| ()),
-        runtime,
+        name_error,
         "load matryona_fixture",
     );
     let point = Class::resolve(ruby, module, "Point")?;
     CLASSES.set(ruby, Fixtures { point })?;
     let again = CLASSES.set(ruby, Fixtures { point });
-    raises(again.map(|_| ()), runtime, "initialised twice");
-    let name_error = ruby.exception_name_error();
+    // Initialised twice: RuntimeError, the CONVENTIONS carve-out.
+    let again_error = again.map(|_| ());
+    raises(
+        again_error,
+        ruby.exception_runtime_error(),
+        "initialised twice",
+    );
     raises(
         Class::resolve(ruby, module, "Missing").map(|_| ()),
         name_error,
@@ -133,7 +144,15 @@ fn suite(ruby: &Ruby) -> Result<(), Error> {
     readers::lazy(ruby)?;
     readers::optional(ruby)?;
     readers::one_of(ruby)?;
-    readers::wrapped_subclass(ruby)
+    readers::wrapped_subclass(ruby)?;
+    reasons::exact(ruby)?;
+    reasons::one_of(ruby)?;
+    reasons::symbol_or_class(ruby)?;
+    duck::own_reasons(ruby)?;
+    duck::siblings_only(ruby)?;
+    duck::class_names(ruby)?;
+    numbers::symbol_or_number(ruby)?;
+    fencing::fencing(ruby)
 }
 
 /// Fails while the VM is still up: magnus formats an error returned from

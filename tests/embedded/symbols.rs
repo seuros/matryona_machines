@@ -37,6 +37,19 @@ pub fn symbols(ruby: &Ruby) -> Result<(), Error> {
         ruby.exception_range_error(),
         "state must be one of :pending, :time_regression",
     );
+    // A Symbol whose name is not valid UTF-8 names no entry: the same
+    // RangeError, never magnus's EncodingError (found by behavior_machines).
+    let binary = "\"\\xFF\".b.to_sym";
+    raises(
+        read(binary),
+        ruby.exception_range_error(),
+        "state must be one of :pending, :time_regression",
+    );
+    raises(
+        States::parse(ruby, eval(ruby, binary)?).map(|_| ()),
+        ruby.exception_range_error(),
+        "a state must be one of :pending, :time_regression",
+    );
     Ok(())
 }
 
@@ -75,6 +88,11 @@ pub fn table(ruby: &Ruby) -> Result<(), Error> {
         [Ordering::Less, Ordering::Equal, Ordering::Greater]
     );
     assert_eq!(Orderings::name(Ordering::Greater), "greater");
+    // Every Symbol, in table order, frozen: a gem's published constant.
+    let every = Orderings::every(ruby);
+    assert!(every.is_frozen());
+    let expected = eval(ruby, "[:less, :equal, :greater]")?;
+    assert!(every.funcall::<_, _, bool>("==", (expected,))?);
     let read = |code: &str| Orderings::parse(ruby, eval(ruby, code)?);
     assert_eq!(read(":equal")?, Ordering::Equal);
     raises(
@@ -129,6 +147,9 @@ pub fn names_only(ruby: &Ruby) -> Result<(), Error> {
     assert_eq!(Refusals::WHAT, "a refusal");
     let made = Refusals::symbol(ruby, &lease);
     assert!(made.equal(ruby.eval::<Symbol>(":lease")?)?);
+    // A unit variant by value, with no binding to borrow.
+    let full = Refusals::symbol_of(ruby, Refusal::Full);
+    assert!(full.equal(ruby.eval::<Symbol>(":full")?)?);
     if let Refusal::Insufficient { needed, held } = insufficient {
         assert!(needed > held);
     }
@@ -216,6 +237,14 @@ pub fn delegated(ruby: &Ruby) -> Result<(), Error> {
         ]
     );
     assert_eq!(Wrappings::EVERY_NAME, Wrappings::NAMES);
+    // Every name, a delegated table's included, in table order, frozen.
+    let every = Wrappings::every(ruby);
+    assert!(every.is_frozen());
+    let expected = eval(
+        ruby,
+        "[:no_candidates, :held, :expired, :pinned, :depth_mismatch, :fanout_mismatch]",
+    )?;
+    assert!(every.funcall::<_, _, bool>("==", (expected,))?);
     // Delegated variants stay output only.
     assert_eq!(Wrappings::UNIT_NAMES, ["no_candidates"]);
     assert!(Wrappings::variant("expired").is_none());

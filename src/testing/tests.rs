@@ -1,4 +1,4 @@
-use super::{SplitMix64, XorShift64, ZERO_SEED, refused, refuses, unchanged};
+use super::{SplitMix64, XorShift64, ZERO_SEED, describes, refused, refuses, unchanged};
 
 #[test]
 fn xorshift_follows_the_published_recurrence() {
@@ -149,4 +149,57 @@ fn unchanged_fails_a_call_that_changed_the_value() {
 fn unchanged_fails_a_refusal_that_changed_the_value() {
     let mut full = Counter { value: 3, limit: 3 };
     let _ = unchanged(&mut full, Counter::leaky_bump);
+}
+
+/// Refusals whose text is written in pieces, the way a `{field}` splits it.
+#[derive(Debug)]
+enum Said {
+    Full,
+    Short(u8),
+}
+
+impl core::fmt::Display for Said {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Full => f.write_str("the gauge is full"),
+            Self::Short(by) => write!(f, "short by {by} units"),
+        }
+    }
+}
+
+impl core::error::Error for Said {}
+
+#[test]
+fn describes_matches_text_written_in_pieces() {
+    describes(&[
+        (Said::Full, "the gauge is full"),
+        (Said::Short(12), "short by 12 units"),
+    ]);
+}
+
+#[test]
+#[should_panic(expected = "describes itself as \"short by 2 units\", expected \"short by 2\"")]
+fn describes_fails_a_prefix_of_the_text() {
+    describes(&[(Said::Short(2), "short by 2")]);
+}
+
+#[test]
+#[should_panic(expected = "describes itself as \"the gauge is full\"")]
+fn describes_fails_a_longer_expectation() {
+    describes(&[(Said::Full, "the gauge is full!")]);
+}
+
+#[test]
+#[should_panic(expected = "a text another refusal already has")]
+fn describes_fails_two_refusals_alike() {
+    describes(&[
+        (Said::Short(1), "short by 1 units"),
+        (Said::Short(1), "short by 1 units"),
+    ]);
+}
+
+#[test]
+#[should_panic(expected = "paired with an empty text")]
+fn describes_fails_an_empty_text() {
+    describes(&[(Said::Full, "")]);
 }

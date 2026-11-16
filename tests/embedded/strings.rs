@@ -75,6 +75,18 @@ pub fn strings(ruby: &Ruby) -> Result<(), Error> {
     assert_eq!(text("'abc'.b")?, "abc");
     assert_eq!(text("''.b")?, "");
     assert_eq!(text("\"a\\x00b\".b")?, "a\0b");
+    // ASCII in another ASCII-compatible encoding is text too, and past
+    // ASCII it is never transcoded. A static libruby has no encoding
+    // database, so EUC-JP (built in) stands for "ASCII-compatible, not
+    // UTF-8"; its UTF-16 and dummy entries are not the real ones either, so
+    // those cases (UTF-16LE, ISO-2022-JP) are proven in a real process:
+    // `probabilistic_machines/test/heavy_hitters_test.rb`.
+    assert_eq!(text("'abc'.force_encoding('EUC-JP')")?, "abc");
+    raises(
+        text(r#""\xA4\xA2".force_encoding('EUC-JP')"#),
+        range_error,
+        "key must be valid UTF-8",
+    );
     for code in [
         r#""caf\xFF".force_encoding('UTF-8')"#,
         r#""\xC3".force_encoding('UTF-8')"#,

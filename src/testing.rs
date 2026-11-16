@@ -164,5 +164,67 @@ where
     answer
 }
 
+/// Asserts each refusal's `Display` text is exactly the text paired with
+/// it, and that no two texts in the table are empty or alike.
+///
+/// The bound is [`core::error::Error`], so a refusal that stops being an
+/// error fails to compile. Compared as the text is written, with no
+/// allocation, so it runs in a `no_std` core's tests.
+///
+/// ```
+/// use core::fmt;
+/// use matryona_machines::testing::describes;
+///
+/// #[derive(Debug)]
+/// enum Refusal { Full, Empty }
+///
+/// impl fmt::Display for Refusal {
+///     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+///         f.write_str(match self {
+///             Self::Full => "the gauge is full",
+///             Self::Empty => "the gauge is empty",
+///         })
+///     }
+/// }
+///
+/// impl core::error::Error for Refusal {}
+///
+/// describes(&[
+///     (Refusal::Full, "the gauge is full"),
+///     (Refusal::Empty, "the gauge is empty"),
+/// ]);
+/// ```
+///
+/// # Panics
+///
+/// When a refusal describes itself otherwise, or when the table pairs an
+/// empty text or the same text twice.
+#[track_caller]
+pub fn describes<R: core::error::Error>(cases: &[(R, &str)]) {
+    for (index, (refusal, text)) in cases.iter().enumerate() {
+        assert!(!text.is_empty(), "{refusal:?} is paired with an empty text");
+        assert!(
+            cases.iter().take(index).all(|(_, other)| other != text),
+            "{refusal:?} is paired with a text another refusal already has: {text:?}"
+        );
+        let mut rest = Some(*text);
+        let written = core::fmt::write(&mut Rest(&mut rest), format_args!("{refusal}"));
+        assert!(
+            written.is_ok() && rest == Some(""),
+            "{refusal:?} describes itself as \"{refusal}\", expected {text:?}"
+        );
+    }
+}
+
+/// What is left of the expected text, `None` once the written text strayed.
+struct Rest<'a, 'b>(&'a mut Option<&'b str>);
+
+impl core::fmt::Write for Rest<'_, '_> {
+    fn write_str(&mut self, written: &str) -> core::fmt::Result {
+        *self.0 = self.0.and_then(|rest| rest.strip_prefix(written));
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests;

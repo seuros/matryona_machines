@@ -8,6 +8,7 @@ use magnus::{
 use super::{
     exact::instance_of,
     message::{Message, refusal},
+    refused::{Explain, Refused, ignoring, refused},
 };
 
 /// The `N` fields of an instance of exactly the `Data`/`Struct` `class`, in
@@ -39,7 +40,7 @@ pub fn exact_fields<const N: usize>(
 ///
 /// ```ignore
 /// let [low, high] = exact_fields_with::<2>(ruby, value, class, || {
-///     format!("bound must be a CanaryMachines::Bound, not {}", value.class())
+///     format!("bound must be a CanaryMachines::Bound, not {}", class_name(value))
 /// })?;
 /// ```
 ///
@@ -52,12 +53,54 @@ pub fn exact_fields_with<const N: usize>(
     class: RClass,
     message: impl Message,
 ) -> Result<[Value; N], Error> {
-    let Some(fields) = RStruct::from_value(value.as_value())
-        .filter(|held| held.size() == N && instance_of(*held, class))
-    else {
-        return Err(refusal(ruby, message));
-    };
-    struct_fields(ruby, fields)
+    exact_fields_why(ruby, value, class, ignoring(message))
+}
+
+/// [`exact_fields`], building the message only when it refuses, from why:
+///
+/// - [`Refused::FieldCount`]: exactly `class`, with other than `N` members;
+/// - [`Refused::Subclass`]: a subclass instance of `class`;
+/// - [`Refused::WrongClass`]: anything else.
+///
+/// ```ignore
+/// let [low, high] = exact_fields_why::<2>(ruby, value, class, |why| match why {
+///     Refused::Subclass => "CanaryMachines::Bound is sealed".into(),
+///     _ => format!("bound must be a CanaryMachines::Bound, not {}", class_name(value)),
+/// })?;
+/// ```
+///
+/// # Errors
+///
+/// `TypeError` as [`exact_fields`], with `message`'s text for the reason.
+pub fn exact_fields_why<const N: usize>(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    class: RClass,
+    message: impl Explain,
+) -> Result<[Value; N], Error> {
+    let value = value.as_value();
+    match RStruct::from_value(value).filter(|held| instance_of(*held, class)) {
+        Some(held) if held.size() == N => struct_fields(ruby, held),
+        Some(held) => {
+            let why = Refused::FieldCount {
+                expected: N,
+                found: held.size(),
+            };
+            Err(refused(ruby, message, why))
+        }
+        None => Err(refused(ruby, message, mismatch(value, &[class]))),
+    }
+}
+
+/// Why `value`, exactly none of `classes`, is refused: a subclass
+/// instance of one of them, or something else.
+pub(super) fn mismatch(value: Value, classes: &[RClass]) -> Refused<'static> {
+    // `rb_obj_is_kind_of`, called natively.
+    if classes.iter().any(|class| value.is_kind_of(*class)) {
+        Refused::Subclass
+    } else {
+        Refused::WrongClass
+    }
 }
 
 /// The first `N` fields of `held`, read from the struct; the caller has
@@ -109,6 +152,24 @@ pub fn optional_fields_with<const N: usize>(
     exact_fields_with(ruby, value, class, message).map(Some)
 }
 
+/// [`optional_fields`], building the message only when it refuses, from
+/// why, as [`exact_fields_why`].
+///
+/// # Errors
+///
+/// As [`exact_fields_why`], for a value that is not `nil`.
+pub fn optional_fields_why<const N: usize>(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    class: RClass,
+    message: impl Explain,
+) -> Result<Option<[Value; N]>, Error> {
+    if value.is_nil() {
+        return Ok(None);
+    }
+    exact_fields_why(ruby, value, class, message).map(Some)
+}
+
 /// `value` as the wrapped Rust `T`, an instance of exactly `class`.
 ///
 /// `TryConvert` for `Obj<T>` accepts a subclass instance, this refuses it,
@@ -137,7 +198,7 @@ pub fn exact_typed<T: TypedData>(
 ///
 /// ```ignore
 /// let handle = exact_typed_with::<Handle>(ruby, value, class, || {
-///     format!("handle must be a PoolMachines::Handle, not {}", value.class())
+///     format!("handle must be a PoolMachines::Handle, not {}", class_name(value))
 /// })?;
 /// ```
 ///

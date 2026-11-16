@@ -56,7 +56,10 @@ use magnus::{
     RStruct, RTypedData, Ruby, Value, prelude::*, value::ReprValue,
 };
 
-use super::message::{Message, refusal};
+use super::{
+    message::{Message, refusal},
+    refused::{Explain, Refused, ignoring, refused},
+};
 
 /// Whether `a` and `b` are the same class, asked natively: `Module#<=` both
 /// ways through `rb_class_inherited_p`, the identity rule [`instance_of`]
@@ -238,8 +241,46 @@ pub fn exact_array_n_with<const N: usize>(
     value: impl ReprValue,
     message: impl Message,
 ) -> Result<[Value; N], Error> {
-    RArray::from_value(value.as_value())
-        .filter(|held| held.len() == N && instance_of(*held, ruby.class_array()))
-        .and_then(|held| held.to_value_array::<N>().ok())
-        .ok_or_else(|| refusal(ruby, message))
+    exact_array_n_why(ruby, value, ignoring(message))
+}
+
+/// [`exact_array_n`], building the message only when it refuses, from why:
+///
+/// - [`Refused::FieldCount`]: exactly an Array, of other than `N`
+///   elements (`found` is its length);
+/// - [`Refused::Subclass`]: an instance of an Array subclass;
+/// - [`Refused::WrongClass`]: anything else.
+///
+/// ```ignore
+/// let [key, value] = exact_array_n_why::<2>(ruby, pair, |why| match why {
+///     Refused::FieldCount { found, .. } => format!("a pair has 2 elements, not {found}"),
+///     _ => "a pair must be an Array".into(),
+/// })?;
+/// ```
+///
+/// # Errors
+///
+/// `TypeError` as [`exact_array_n`], with `message`'s text for the reason.
+pub fn exact_array_n_why<const N: usize>(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    message: impl Explain,
+) -> Result<[Value; N], Error> {
+    let value = value.as_value();
+    let array = ruby.class_array();
+    let Some(held) = RArray::from_value(value).filter(|held| instance_of(*held, array)) else {
+        let why = if value.is_kind_of(array) {
+            Refused::Subclass
+        } else {
+            Refused::WrongClass
+        };
+        return Err(refused(ruby, message, why));
+    };
+    held.to_value_array::<N>().map_err(|_| {
+        let why = Refused::FieldCount {
+            expected: N,
+            found: held.len(),
+        };
+        refused(ruby, message, why)
+    })
 }

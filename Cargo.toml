@@ -21,6 +21,9 @@ exclude = [
 keywords = ["ruby", "magnus", "testing", "deterministic", "no-std"]
 categories = ["no-std", "development-tools::ffi", "development-tools::testing"]
 
+[package.metadata.docs.rs]
+all-features = true
+
 [workspace]
 members = [".", "tests/embedded"]
 default-members = ["."]

@@ -11,8 +11,9 @@ use magnus::{Error, RClass, RStruct, Ruby, Value, value::ReprValue};
 
 use super::{
     exact::which,
-    fields::struct_fields,
+    fields::{mismatch, struct_fields},
     message::{Message, refusal},
+    refused::{Explain, Refused, ignoring, refused},
 };
 
 /// A `Data`/`Struct` already proven an instance of exactly one of the
@@ -106,11 +107,49 @@ pub fn which_struct_with(
     classes: &[RClass],
     message: impl Message,
 ) -> Result<(usize, ExactStruct), Error> {
+    which_struct_why(ruby, value, classes, ignoring(message))
+}
+
+/// [`which_struct`], building the message only when it refuses, from why:
+/// [`Refused::Subclass`] for a subclass instance of one of `classes`,
+/// [`Refused::WrongClass`] for anything else.
+///
+/// # Errors
+///
+/// As [`which_struct`], with `message`'s text for the reason.
+pub fn which_struct_why(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    classes: &[RClass],
+    message: impl Explain,
+) -> Result<(usize, ExactStruct), Error> {
     let value = value.as_value();
-    let found = RStruct::from_value(value).and_then(|held| Some((which(held, classes)?, held)));
-    found
+    exactly_one(value, classes)
         .map(|(index, held)| (index, ExactStruct::proven(held)))
-        .ok_or_else(|| refusal(ruby, message))
+        .ok_or_else(|| refused(ruby, message, mismatch(value, classes)))
+}
+
+/// The struct `value` is and the index of the class it is exactly an
+/// instance of, or `None`.
+pub(super) fn exactly_one(value: Value, classes: &[RClass]) -> Option<(usize, RStruct)> {
+    RStruct::from_value(value).and_then(|held| Some((which(held, classes)?, held)))
+}
+
+/// The `N` fields of the struct `value` is, exactly one of `classes`, with
+/// that class's index; why not, otherwise.
+pub(super) fn fields_of_one<const N: usize>(
+    ruby: &Ruby,
+    value: Value,
+    classes: &[RClass],
+) -> Result<Result<(usize, [Value; N]), Refused<'static>>, Error> {
+    let Some((index, held)) = exactly_one(value, classes) else {
+        return Ok(Err(mismatch(value, classes)));
+    };
+    if held.size() != N {
+        let found = held.size();
+        return Ok(Err(Refused::FieldCount { expected: N, found }));
+    }
+    Ok(Ok((index, struct_fields(ruby, held)?)))
 }
 
 /// The index of the class `value` is exactly an instance of, and its `N`
@@ -138,7 +177,7 @@ pub fn which_fields<const N: usize>(
 ///
 /// ```ignore
 /// let (index, [low, high]) = which_fields_with::<2>(ruby, value, &models, || {
-///     format!("model must be a Reference or a Paired, not {}", value.class())
+///     format!("model must be a Reference or a Paired, not {}", class_name(value))
 /// })?;
 /// ```
 ///
@@ -151,14 +190,26 @@ pub fn which_fields_with<const N: usize>(
     classes: &[RClass],
     message: impl Message,
 ) -> Result<(usize, [Value; N]), Error> {
-    let value = value.as_value();
-    let Some((index, held)) = RStruct::from_value(value)
-        .filter(|held| held.size() == N)
-        .and_then(|held| Some((which(held, classes)?, held)))
-    else {
-        return Err(refusal(ruby, message));
-    };
-    Ok((index, struct_fields(ruby, held)?))
+    which_fields_why(ruby, value, classes, ignoring(message))
+}
+
+/// [`which_fields`], building the message only when it refuses, from why:
+///
+/// - [`Refused::FieldCount`]: exactly one of `classes`, with other than
+///   `N` members;
+/// - [`Refused::Subclass`]: a subclass instance of one of `classes`;
+/// - [`Refused::WrongClass`]: anything else.
+///
+/// # Errors
+///
+/// As [`which_fields`], with `message`'s text for the reason.
+pub fn which_fields_why<const N: usize>(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    classes: &[RClass],
+    message: impl Explain,
+) -> Result<(usize, [Value; N]), Error> {
+    fields_of_one(ruby, value.as_value(), classes)?.map_err(|why| refused(ruby, message, why))
 }
 
 /// `nil` as `None`, anything else as [`which_fields`] reads it: for an
@@ -191,4 +242,22 @@ pub fn optional_which_fields_with<const N: usize>(
         return Ok(None);
     }
     which_fields_with(ruby, value, classes, message).map(Some)
+}
+
+/// [`optional_which_fields`], building the message only when it refuses,
+/// from why, as [`which_fields_why`].
+///
+/// # Errors
+///
+/// As [`which_fields_why`], for a value that is not `nil`.
+pub fn optional_which_fields_why<const N: usize>(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    classes: &[RClass],
+    message: impl Explain,
+) -> Result<Option<(usize, [Value; N])>, Error> {
+    if value.is_nil() {
+        return Ok(None);
+    }
+    which_fields_why(ruby, value, classes, message).map(Some)
 }

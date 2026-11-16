@@ -10,14 +10,14 @@
 //! [`which_fields`](super::which_fields)'s one exact-class check.
 use std::borrow::Cow;
 
-use magnus::{Error, RClass, RStruct, Ruby, Symbol, Value, value::ReprValue};
+use magnus::{Error, RClass, Ruby, Symbol, Value, value::ReprValue};
 
 use super::{
-    exact::which,
-    fields::struct_fields,
-    message::{Message, refusal},
-    symbol::SymbolNames,
-    which::ExactStruct,
+    fields::mismatch,
+    message::Message,
+    refused::{Explain, Refused, ignoring, refused},
+    symbol::{SymbolNames, lookup},
+    which::{ExactStruct, exactly_one, fields_of_one},
 };
 
 /// What [`symbol_or_fields`] and [`symbol_or_struct`] read: a unit variant
@@ -84,17 +84,44 @@ pub fn symbol_or_fields_with<T: SymbolNames, const N: usize>(
     classes: &[RClass],
     message: impl Message,
 ) -> Result<Choice<T::Variant, [Value; N]>, Error> {
+    symbol_or_fields_why(ruby, value, table, classes, ignoring(message))
+}
+
+/// [`symbol_or_fields`], building the message only when it refuses, from
+/// why:
+///
+/// - [`Refused::UnknownSymbol`] (`RangeError`): a Symbol naming no unit
+///   variant, handed over so the message can name it;
+/// - [`Refused::FieldCount`]: exactly one of `classes`, with other than
+///   `N` members;
+/// - [`Refused::Subclass`]: a subclass instance of one of `classes`;
+/// - [`Refused::WrongClass`]: anything else.
+///
+/// ```ignore
+/// let fault = symbol_or_fields_why(ruby, value, Faults, &[delay], |why| match why {
+///     Refused::UnknownSymbol(symbol) => format!("unknown fault {}", symbol.inspect()),
+///     _ => format!("a fault is :raise, :garble or a Delay, not {}", class_name(value)),
+/// })?;
+/// ```
+///
+/// # Errors
+///
+/// As [`symbol_or_fields`], with `message`'s text for the reason.
+pub fn symbol_or_fields_why<T: SymbolNames, const N: usize>(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    table: T,
+    classes: &[RClass],
+    message: impl Explain,
+) -> Result<Choice<T::Variant, [Value; N]>, Error> {
     let value = value.as_value();
     if let Some(symbol) = Symbol::from_value(value) {
         return unit(ruby, symbol, table, message).map(Choice::Symbol);
     }
-    let Some((index, held)) = RStruct::from_value(value)
-        .filter(|held| held.size() == N)
-        .and_then(|held| Some((which(held, classes)?, held)))
-    else {
-        return Err(refusal(ruby, message));
-    };
-    Ok(Choice::Struct(index, struct_fields(ruby, held)?))
+    match fields_of_one(ruby, value, classes)? {
+        Ok((index, fields)) => Ok(Choice::Struct(index, fields)),
+        Err(why) => Err(refused(ruby, message, why)),
+    }
 }
 
 /// [`symbol_or_fields`] for classes whose member counts differ: the struct
@@ -136,18 +163,33 @@ pub fn symbol_or_struct_with<T: SymbolNames>(
     classes: &[RClass],
     message: impl Message,
 ) -> Result<Choice<T::Variant, ExactStruct>, Error> {
+    symbol_or_struct_why(ruby, value, table, classes, ignoring(message))
+}
+
+/// [`symbol_or_struct`], building the message only when it refuses, from
+/// why.
+///
+/// [`Refused::UnknownSymbol`] (`RangeError`) for a Symbol naming no
+/// unit variant, [`Refused::Subclass`] for a subclass instance of one of
+/// `classes`, [`Refused::WrongClass`] for anything else.
+///
+/// # Errors
+///
+/// As [`symbol_or_struct`], with `message`'s text for the reason.
+pub fn symbol_or_struct_why<T: SymbolNames>(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    table: T,
+    classes: &[RClass],
+    message: impl Explain,
+) -> Result<Choice<T::Variant, ExactStruct>, Error> {
     let value = value.as_value();
     if let Some(symbol) = Symbol::from_value(value) {
         return unit(ruby, symbol, table, message).map(Choice::Symbol);
     }
-    RStruct::from_value(value)
-        .and_then(|held| {
-            Some(Choice::Struct(
-                which(held, classes)?,
-                ExactStruct::proven(held),
-            ))
-        })
-        .ok_or_else(|| refusal(ruby, message))
+    exactly_one(value, classes)
+        .map(|(index, held)| Choice::Struct(index, ExactStruct::proven(held)))
+        .ok_or_else(|| refused(ruby, message, mismatch(value, classes)))
 }
 
 /// The unit variant `symbol` names in `T`'s table; `RangeError` with
@@ -156,8 +198,7 @@ fn unit<T: SymbolNames>(
     ruby: &Ruby,
     symbol: Symbol,
     _table: T,
-    message: impl Message,
+    message: impl Explain,
 ) -> Result<T::Variant, Error> {
-    T::variant(&symbol.name()?)
-        .ok_or_else(|| Error::new(ruby.exception_range_error(), message.text()))
+    lookup(symbol, T::variant).ok_or_else(|| refused(ruby, message, Refused::UnknownSymbol(symbol)))
 }

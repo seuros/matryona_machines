@@ -12,16 +12,21 @@ use magnus::{Error, Ruby};
 ///
 /// ```ignore
 /// let handle: Obj<Handle> = exact_typed_with(ruby, value, class, || {
-///     format!("handle must be a PoolMachines::Handle, not {}", value.class())
+///     format!("handle must be a PoolMachines::Handle, not {}", class_name(value))
 /// })?;
 /// ```
 ///
-/// Formatting a class calls its `to_s`, which is Ruby. That is fine here:
+/// Name what arrived with [`class_name`](super::class_name), not
+/// `value.class()`. `value.class()` is the value's `klass`: a value whose
+/// singleton class was opened, and the rare direct-subclass instance the
+/// exact check gave one while refusing it, show as `#<Class:#<Sub ...>>`,
+/// and its `Display` dispatches a `to_s` the class may redefine.
+/// `class_name` answers the real class's name, `Sub`, through Ruby's own
+/// `Kernel#class` and `Module#to_s`. Either is Ruby, which is fine here:
 /// the closure runs only on refusal, which raises before the core is
-/// called, so no work can be lost. `value.class()` is the value's `klass`:
-/// a wrong-type value shows as `Integer` or `Symbol`, but the rare
-/// direct-subclass instance, which the exact check gave a singleton class
-/// while refusing it, shows as `#<Class:#<Sub ...>>`.
+/// called, so no work can be lost. A closure that needs to know why the
+/// value was refused is an [`Explain`](super::Explain), taken by the
+/// `_why` readers.
 ///
 /// It is a trait, rather than a second generic parameter beside the
 /// closure, so the readers keep one explicit generic argument:

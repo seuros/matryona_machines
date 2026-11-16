@@ -65,7 +65,7 @@ pub fn exact_string(ruby: &Ruby, value: impl ReprValue, name: &str) -> Result<RS
 ///
 /// ```ignore
 /// let key = exact_string_with(ruby, value, || {
-///     format!("a key must be a String, not {}", value.class())
+///     format!("a key must be a String, not {}", class_name(value))
 /// })?;
 /// ```
 ///
@@ -99,7 +99,7 @@ pub fn bytes(value: Value, name: &str) -> Result<Vec<u8>, Error> {
 /// [`bytes`] with the `TypeError` message built only when it refuses.
 ///
 /// ```ignore
-/// let item = bytes_with(value, || format!("item must be a String, not {}", value.class()))?;
+/// let item = bytes_with(value, || format!("item must be a String, not {}", class_name(value)))?;
 /// ```
 ///
 /// # Errors
@@ -138,7 +138,9 @@ pub fn utf8(value: Value, name: &str) -> Result<String, Error> {
 /// other class to name, and a message about the type would be wrong there.
 ///
 /// ```ignore
-/// let key = utf8_with(value, "key", || format!("key must be a String, not {}", value.class()))?;
+/// let key = utf8_with(value, "key", || {
+///     format!("key must be a String, not {}", class_name(value))
+/// })?;
 /// ```
 ///
 /// # Errors

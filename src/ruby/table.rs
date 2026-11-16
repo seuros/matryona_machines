@@ -105,7 +105,8 @@
 /// `Lease(token)`) leaves as its Symbol but can never be built back from
 /// one. The `names_only` form writes the same exhaustive `match` from
 /// patterns and implements [`SymbolNames`](crate::ruby::SymbolNames)
-/// instead: `name(&variant)`, `symbol(ruby, &variant)` and `NAMES`, with
+/// instead: `name(&variant)`, `symbol(ruby, &variant)` (`symbol_of(ruby,
+/// Refusal::Full)` for a unit variant written in place) and `NAMES`, with
 /// no `ALL` and no `parse` (its unit arms alone are read back, below).
 /// Write each variant as its shape, `Pinned { .. }` for a struct variant,
 /// `Lease(..)` for a tuple one, the bare name for a unit one, or
@@ -129,6 +130,7 @@
 /// assert_eq!(Refusals::name(&Refusal::Pinned { by: 1 }), "pinned");
 /// assert_eq!(Refusals::NAMES, ["pinned", "lease", "full"]);
 /// # let _ = Refusal::Full;
+/// # fn _full(ruby: &magnus::Ruby) -> magnus::Symbol { Refusals::symbol_of(ruby, Refusal::Full) }
 /// ```
 ///
 /// The same checks hold: a missing variant is a non-exhaustive `match`

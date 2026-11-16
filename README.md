@@ -62,13 +62,20 @@ assert!(rng.below(6) < 6);
   the refusal; `refuses(&mut value, expected, call)` also names it.
   `unchanged(&mut value, call)` is the same proof for an accepted call that
   must change nothing (a query through `&mut`, an honoured repeat), and
-  returns its answer.
+  returns its answer. `describes(&[(Refusal::Full, "the gauge is full"),
+  ...])` asserts each refusal's `Display` text, with no allocation.
 - **`ruby`** (pulls `magnus` and `std`).
   - `Class::resolve(ruby, module, "Name")` looks a constant up once at init
     and pins it with `gc_register_mark_object`; `Class::pin(ruby, class)`
     pins a class the binding defined itself, with no lookup. `Registry<T>`
-    is the static that holds a gem's classes and raises `RuntimeError` when
-    read before init or set twice.
+    is the static that holds a gem's classes; it raises `NameError` when
+    read before init (the extension loaded without its gem) and
+    `RuntimeError` when set twice. `registry! { static CLASSES: Classes =
+    "gem"; pub fn classes; }` declares that static and the gem's
+    `classes(ruby)` accessor over it in one item.
+  - `sized!(len, [1, 2, 3], |N| Core::<N>::new(..), _ => return Err(..))`
+    picks a const-generic size at runtime: the body runs with `const N`
+    bound to the matching literal, any other length runs the `_` arm.
   - `instance_of(value, class)` for any value, `same_class(a, b)`, and
     `which(value, &[classes])` (the index of the class it is exactly an
     instance of): the one exact-class check. The readers on it:
@@ -84,6 +91,25 @@ assert!(rng.below(6) < 6);
     `utf8_with(value, name, message)`, `exact_array_with`,
     `exact_array_n_with::<N>`). `optional_typed::<T>` is nil or
     `exact_typed`.
+  - Readers that refuse for more than one reason have `_why` twins
+    (`exact_fields_why`, `optional_fields_why`, `exact_array_n_why`,
+    `which_fields_why`, `optional_which_fields_why`, `which_struct_why`,
+    `symbol_or_fields_why`, `symbol_or_struct_why`, `own_or_sibling_why`)
+    taking an `Explain` closure, handed the `Refused` reason: `Subclass`,
+    `MissingReader(name)`, `FieldCount { expected, found }`,
+    `UnknownSymbol(symbol)`, `NotFinite(real)` or `WrongClass`. The
+    reason also picks the exception (`Refused::exception`): `RangeError`
+    for an unknown Symbol or a non-finite real, `TypeError` otherwise.
+    `class_name(value)` names what arrived for such a message: the real
+    class, never `#<Class:#<Object:0x...>>`, and no redefined `class` or
+    `to_s` consulted. Written inline as the reader's argument, the
+    closure needs no annotation; bound to a `let` first, it needs
+    `explain(|why| ..)` or `|why: Refused<'_>|`, or the compiler infers
+    it for one lifetime only ("implementation of `FnOnce` is not general
+    enough"). `symbol.inspect()` in an `UnknownSymbol` arm needs
+    magnus's `ReprValue` in scope; `use matryona_machines::ruby::prelude::*`
+    brings it with `Refused`, `explain`, `class_name`, `Message` and the
+    table traits.
   - `which_fields::<N>(ruby, value, &[classes], message)`: which class,
     and its fields, in one exact-class check (`optional_which_fields`
     also takes nil). `which_struct` answers `(index, ExactStruct)` for
@@ -99,7 +125,31 @@ assert!(rng.below(6) < 6);
     gem's own class read from the struct, a sibling gem's value through
     its public readers, a subclass of the own class refused. The sibling
     path runs Ruby, so it belongs with the other conversions, before any
-    core call.
+    core call. `own_or_sibling_default` raises the built-in
+    `sibling_message(own, readers)`, `"expected a LeaseMachines::Lease or
+    a value with #owner, #token, #expires_at"`, with `article` picking
+    "an" before a vowel (`"an ElectionMachines::Lease"`).
+  - `sibling::<N>(ruby, value, ["readers"], message)`: a sibling's value
+    with no own class, by its readers alone; `sibling_shape(value,
+    &[&["remaining"], &["overspent"]])` picks the first shape whose
+    readers the value has, as `(index, SiblingShape)`, and
+    `SiblingShape::read::<N>` calls them. Same rules: public readers only,
+    all asked for before any runs.
+  - `fencing`: the lease gem's `FencingToken`, `Lease` and `Checkpoint`,
+    and the election and handoff gems' copies of them, read and built for
+    any core. A gem describes its core with `fencing_family!` (on a marker
+    type, from the lease core's method names; no dependency on any core),
+    then calls `fencing::token::<Family>`, `lease`, `checkpoint` (own class
+    or sibling, rebuilt through the core), `token_object`, `lease_object`,
+    `lease_row`, `checkpoint_row`, and the hooks a gem binds directly:
+    `validate_raw`, `validate_lease`, `validate_checkpoint`, `own_token`,
+    `own_lease`, `token_scope`, `token_order`, `token_newer`
+    (`function!(fencing::token_order::<Family>, 2)`). `token: FencingToken`
+    alone implements the token half, for a gem that carries only that.
+  - `symbol_or_real(ruby, value, Table, message)`: a `Symbols` table's
+    variant or a real (`real`'s rule), as `SymbolOrReal::Symbol(variant)`
+    or `SymbolOrReal::Real(f64)`; `symbol_or_finite` also refuses NaN and
+    the infinities.
   - `keep(ruby, receiver, &cell, decide, build)`: clone-then-keep.
   - `integer::<T>(value, "name")`, `integer_in(value, "name", lo..=hi)`,
     `positive::<NonZero<T>>`, `optional::<T>` (nil or an Integer),
@@ -117,7 +167,12 @@ assert!(rng.below(6) < 6);
     (`Pinned { .. } => "pinned"`): every variant out, the unit ones
     (written as a bare name) back in through `Table::parse_unit` and
     `Table::variant`, and a wrapping variant answered under its payload's
-    table (`Lease(inner) => use LeaseRefusals`). Every table is `Named`
+    table (`Lease(inner) => use LeaseRefusals`). `Table::symbol_of(ruby,
+    Admission::Buffered)` takes the variant by value, so a unit arm
+    answers its Symbol with no `buffered @` binding to borrow.
+    `Table::every(ruby)` is every Symbol in table order as a frozen Array,
+    the constant a gem publishes (`REFUSALS`), for either form (a
+    `names_only` table's `NAMES`, delegated names included). Every table is `Named`
     (`EVERY_NAME`, `name_of(&variant)`).
 
 ```rust,ignore
@@ -140,7 +195,7 @@ let capacity: NonZero<u32> = positive(value, "capacity")?; // 0 and 2**32: 1..=4
 let expires = instant(value, "expires")?;                  // past u64 nanoseconds
 let ticket: Obj<Ticket> = exact_typed(ruby, value, class, "expected a Ticket")?;
 let handle = exact_typed_with::<Handle>(ruby, value, class, || {
-    format!("handle must be a PoolMachines::Handle, not {}", value.class())
+    format!("handle must be a PoolMachines::Handle, not {}", class_name(value))
 })?;
 let max: usize = integer_in(value, "max", 0..=WAITER_CAPACITY)?; // "max must be in 0..=64"
 let gain = finite(value, "gain")?;                              // 1 and 0.5; not 1r, not NaN
@@ -225,6 +280,13 @@ Ok(Refusals::symbol(ruby, refusal).as_value())
   for before any is called. That path runs Ruby (`respond_to?` when
   redefined, and each reader), so it happens while converting arguments,
   before any core call and with no borrow held.
+- **Refusal reasons** are found only on refusal, natively
+  (`rb_obj_is_kind_of` for `Subclass`), so an accepted value pays
+  nothing. `_with` readers run on their `_why` twins with the reason
+  ignored, so their messages and exception classes are unchanged.
+  `class_name` and `sibling_message` run Ruby's own `Kernel#class` and
+  `Module#to_s` through `bind_call` (magnus's native name readers are
+  `unsafe`), which is why they belong in a message closure.
 - **Generators** are for tests: `below(0)` answers 0 rather than panic, and
   `XorShift64::new(0)` uses `ZERO_SEED`, since zero is the one state
   xorshift never leaves.
@@ -233,7 +295,8 @@ The `ruby` feature is tested inside a live VM: `tests/embedded` boots Ruby
 with magnus's `embed` (linked into that test binary only) and runs every
 item, a build after `GC.compact` included.
 `cargo test -p matryona-machines-embedded`. The `symbols!` compile-time
-checks are `compile_fail` doc tests: `cargo test --doc --features ruby`.
+checks, and those on `Explain` closures and `SiblingShape`, are
+`compile_fail` doc tests: `cargo test --doc --features ruby`.
 
 ## Not Included
 

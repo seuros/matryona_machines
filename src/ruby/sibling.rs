@@ -26,14 +26,24 @@
 //! does then can only raise, never lose work. The readers' answers are
 //! values like any other argument; convert and validate them through the
 //! core as the own class's fields would be.
+//!
+//! [`own_or_sibling_why`] hands its message closure the rule that refused
+//! ([`Refused`]: a subclass, a missing reader, a struct of the wrong
+//! length); [`own_or_sibling_default`] raises [`sibling_message`]'s
+//! built-in text. A sibling's value the gem has no class of its own for
+//! is read by [`sibling`](super::sibling) and, one of several shapes, by
+//! [`sibling_shape`](super::sibling_shape).
 use std::borrow::Cow;
 
 use magnus::{Error, RClass, Ruby, Value, value::ReprValue};
 
 use super::{
     exact::instance_of,
-    fields::exact_fields_with,
-    message::{Message, refusal},
+    fields::exact_fields_why,
+    message::Message,
+    names::sibling_message,
+    refused::{Explain, Refused, ignoring, refused},
+    shape::sibling_why,
 };
 
 /// The `N` fields of `value`, in `readers` order: from the struct when it
@@ -68,7 +78,7 @@ pub fn own_or_sibling<const N: usize>(
 ///
 /// ```ignore
 /// let [raw] = own_or_sibling_with(ruby, value, token, ["raw"], || {
-///     format!("expected a {token} or a value with its readers, not {}", value.class())
+///     format!("expected a {token} or a value with its readers, not {}", class_name(value))
 /// })?;
 /// ```
 ///
@@ -82,23 +92,71 @@ pub fn own_or_sibling_with<const N: usize>(
     readers: [&str; N],
     message: impl Message,
 ) -> Result<[Value; N], Error> {
+    own_or_sibling_why(ruby, value, own, readers, ignoring(message))
+}
+
+/// [`own_or_sibling`] with a built-in message naming `own` and the
+/// readers.
+///
+/// It is the message the lease, election and handoff gems each wrote,
+/// [`sibling_message`]'s `"expected a LeaseMachines::Lease
+/// or a value with #owner, #token, #expires_at"` (`"an ElectionMachines::Lease"`
+/// where the name starts with a vowel), built only on refusal.
+///
+/// ```ignore
+/// let lease = classes(ruby)?.lease.get(ruby);
+/// let [owner, held, expires_at] =
+///     own_or_sibling_default(ruby, value, lease, ["owner", "token", "expires_at"])?;
+/// ```
+///
+/// # Errors
+///
+/// As [`own_or_sibling`], with that message for every refusal.
+pub fn own_or_sibling_default<const N: usize>(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    own: RClass,
+    readers: [&str; N],
+) -> Result<[Value; N], Error> {
+    own_or_sibling_why(ruby, value, own, readers, |_| {
+        sibling_message(own, &readers)
+    })
+}
+
+/// [`own_or_sibling`], building the message only when it refuses, from
+/// why it refused:
+///
+/// - [`Refused::FieldCount`]: exactly `own`, with other than `N` members;
+/// - [`Refused::Subclass`]: a subclass instance of `own`;
+/// - [`Refused::MissingReader`]: anything else, naming the first reader
+///   it lacks publicly. No reader has run.
+///
+/// ```ignore
+/// let [value] = own_or_sibling_why(ruby, watermark, own, ["value"], |why| match why {
+///     Refused::Subclass => format!("{} is sealed", class_name(watermark)),
+///     _ => "watermark must be a JoinMachines::Watermark or respond to #value".into(),
+/// })?;
+/// ```
+///
+/// # Errors
+///
+/// `TypeError` as [`own_or_sibling`], with `message`'s text for the reason;
+/// whatever a reader raises, as it raised.
+pub fn own_or_sibling_why<const N: usize>(
+    ruby: &Ruby,
+    value: impl ReprValue,
+    own: RClass,
+    readers: [&str; N],
+    message: impl Explain,
+) -> Result<[Value; N], Error> {
     let value = value.as_value();
     if instance_of(value, own) {
-        return exact_fields_with(ruby, value, own, message);
+        return exact_fields_why(ruby, value, own, message);
     }
     // `rb_obj_is_kind_of`, called natively: a redefined `is_a?` changes
     // nothing.
     if value.is_kind_of(own) {
-        return Err(refusal(ruby, message));
+        return Err(refused(ruby, message, Refused::Subclass));
     }
-    for reader in readers {
-        if !value.respond_to(reader, false)? {
-            return Err(refusal(ruby, message));
-        }
-    }
-    let mut out = [ruby.qnil().as_value(); N];
-    for (slot, reader) in out.iter_mut().zip(readers) {
-        *slot = value.funcall_public(reader, ())?;
-    }
-    Ok(out)
+    sibling_why(ruby, value, readers, message)
 }
