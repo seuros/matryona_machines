@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0](https://github.com/seuros/matryona_machines/compare/matryona-machines-v0.4.0...matryona-machines-v0.5.0) (2026-11-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* refusal reasons, fencing and numeric helpers, registry! and sized!
+
+### Features
+
+* refusal reasons, fencing and numeric helpers, registry! and sized! ([36173f1](https://github.com/seuros/matryona_machines/commit/36173f1d4f08382dbf73d1d0455730e0b3efdce4))
+
 ## [0.4.0](https://github.com/seuros/matryona_machines/compare/matryona-machines-v0.3.0...matryona-machines-v0.4.0) (2026-11-14)
 
 
