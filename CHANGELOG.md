@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/seuros/matryona_machines/compare/matryona-machines-v0.5.0...matryona-machines-v0.6.0) (2026-11-16)
+
+
+### Features
+
+* fix wrapped types' classes at init with Class::resolve_wrapped and Class::pin_wrapped ([b10e16b](https://github.com/seuros/matryona_machines/commit/b10e16b2b0253f0948f78ed7dda684581cde45e5))
+
 ## [0.5.0](https://github.com/seuros/matryona_machines/compare/matryona-machines-v0.4.0...matryona-machines-v0.5.0) (2026-11-16)
 
 
