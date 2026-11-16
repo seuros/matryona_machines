@@ -73,6 +73,20 @@ assert!(rng.below(6) < 6);
     `RuntimeError` when set twice. `registry! { static CLASSES: Classes =
     "gem"; pub fn classes; }` declares that static and the gem's
     `classes(ruby)` accessor over it in one item.
+  - `Class::resolve_wrapped::<T>(ruby, module, "Name")` and
+    `Class::pin_wrapped::<T>(ruby, class)` do the same for the class a
+    `#[magnus::wrap]` type `T` answers under, and fix magnus's own cached
+    class for `T` to it. magnus otherwise resolves that class on the
+    first conversion of a `T` (a method returning it, `into_value_with`,
+    `Obj::wrap`) through `Object.const_get`, a Ruby method, after the core
+    has decided: a constant redefined before then makes handles of the
+    wrong class, a redefined `const_get` runs caller code mid-call, and
+    one that raises hits magnus's `unwrap`, an uncatchable `fatal`. Call
+    one for every wrapped type in init: a missing constant is a
+    `NameError` there, and so is magnus caching any other class (a wrap
+    path naming another constant, a `T` converted before init). Enum wraps
+    with per-variant `#[magnus(class = ..)]` arms keep one cache per arm,
+    which this does not reach.
   - `sized!(len, [1, 2, 3], |N| Core::<N>::new(..), _ => return Err(..))`
     picks a const-generic size at runtime: the body runs with `const N`
     bound to the matching literal, any other length runs the `_` arm.

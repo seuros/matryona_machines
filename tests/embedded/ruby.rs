@@ -14,6 +14,7 @@ mod scalars;
 mod siblings;
 mod strings;
 mod symbols;
+mod wrapped;
 
 use magnus::{Error, ExceptionClass, RModule, RStruct, Ruby, Value, prelude::*};
 use matryona_machines::ruby::{Class, Registry, instance_of};
@@ -152,7 +153,11 @@ fn suite(ruby: &Ruby) -> Result<(), Error> {
     duck::siblings_only(ruby)?;
     duck::class_names(ruby)?;
     numbers::symbol_or_number(ruby)?;
-    fencing::fencing(ruby)
+    fencing::fencing(ruby)?;
+    wrapped::redefined_after_init(ruby)?;
+    wrapped::missing_at_init(ruby)?;
+    wrapped::mismatched(ruby)?;
+    wrapped::defined(ruby)
 }
 
 /// Fails while the VM is still up: magnus formats an error returned from

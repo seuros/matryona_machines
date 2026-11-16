@@ -47,6 +47,13 @@ fn real_class_name(value: Value) -> Result<String, Error> {
     module_name(&ruby, class)
 }
 
+/// `Module#to_s` bound to `class`, falling back to its `inspect`: the
+/// class's own name for a message, built on refusal only.
+pub(super) fn named(class: RClass) -> String {
+    let ruby = Ruby::get_with(class);
+    module_name(&ruby, class.as_value()).unwrap_or_else(|_| class.inspect())
+}
+
 /// `Module#to_s` bound to `module`: its name, or `#<Class:0x...>`.
 fn module_name(ruby: &Ruby, module: Value) -> Result<String, Error> {
     ruby.class_module()
@@ -77,8 +84,7 @@ pub fn article(name: &str) -> &'static str {
 /// `Module#to_s` names `own`, bound, so call it on refusal.
 #[must_use]
 pub fn sibling_message(own: RClass, readers: &[&str]) -> String {
-    let ruby = Ruby::get_with(own);
-    let name = module_name(&ruby, own.as_value()).unwrap_or_else(|_| own.inspect());
+    let name = named(own);
     let article = article(&name);
     if readers.is_empty() {
         return format!("expected {article} {name}");

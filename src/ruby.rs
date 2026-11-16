@@ -9,6 +9,11 @@
 //!   same for a class the binding defined itself. [`Registry`] is the
 //!   static-friendly holder a gem keeps them in, and [`registry!`] declares
 //!   that static with the gem's `classes(ruby)` accessor over it.
+//!   A wrapped Rust type's class is fixed the same way:
+//!   [`Class::resolve_wrapped`] (a constant) and [`Class::pin_wrapped`]
+//!   (a class init defined) force magnus's lazily cached class for the
+//!   type at init and check it is the pinned one, so no conversion of a
+//!   handle ever runs `Object.const_get` after the core has decided.
 //! - **The native boundary is the authority.** [`instance_of`] is the one
 //!   exact-class check, for any value, and [`same_class`] its identity rule:
 //!   a genuine instance (with or without an opened singleton class) passes,
