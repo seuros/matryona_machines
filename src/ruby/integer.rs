@@ -210,6 +210,18 @@ pub fn instant(value: Value, name: &str) -> Result<Duration, Error> {
         })
 }
 
+/// `nil` as `None`, anything else as [`instant`] reads it, messages included.
+///
+/// # Errors
+///
+/// As [`instant`], for a value that is not `nil`.
+pub fn optional_instant(value: Value, name: &str) -> Result<Option<Duration>, Error> {
+    if value.is_nil() {
+        return Ok(None);
+    }
+    instant(value, name).map(Some)
+}
+
 /// A `Duration` leaving as Integer nanoseconds, exact however large, up to
 /// `Duration::MAX`: a core may answer `now + span`, which can pass `u64`.
 /// [`instant`] reads every value it produces back.

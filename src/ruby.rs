@@ -65,7 +65,8 @@
 //!   a copy, build the answer with no `RefCell` borrow held, re-check frozen
 //!   (`FrozenError`) and unchanged (`RuntimeError`), and only then store.
 //! - **Malformed input raises.** [`integer`], [`integer_in`], [`positive`],
-//!   [`optional`], [`optional_positive`], [`duration`] and [`instant`] raise
+//!   [`optional`], [`optional_positive`], [`duration`], [`instant`] and
+//!   [`optional_instant`] raise
 //!   `TypeError` for a non-Integer and `RangeError` outside the type or the
 //!   caller's range, naming the argument: `"<name> must be an Integer"`,
 //!   `"<name> must be in <min>..=<max>"`. [`nanoseconds`] is the way back
@@ -132,7 +133,7 @@ pub use fields::{
 };
 pub use integer::{
     Bounded, Positive, duration, instant, integer, integer_in, nanoseconds, optional,
-    optional_positive, positive,
+    optional_instant, optional_positive, positive,
 };
 pub use keep::keep;
 pub use message::Message;

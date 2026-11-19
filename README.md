@@ -168,7 +168,8 @@ assert!(rng.below(6) < 6);
   - `integer::<T>(value, "name")`, `integer_in(value, "name", lo..=hi)`,
     `positive::<NonZero<T>>`, `optional::<T>` (nil or an Integer),
     `optional_positive`, `duration` (`u64` nanoseconds), `instant` (the
-    whole `Duration` range), `nanoseconds(ruby, duration)`.
+    whole `Duration` range), `optional_instant` (nil or an instant),
+    `nanoseconds(ruby, duration)`.
   - `real(value, "name")` (exactly a Float or an Integer, as `f64`),
     `finite` (also refusing NaN and the infinities), `boolean` (exactly
     `true` or `false`), `bytes` and `utf8` (exactly a String, copied out

@@ -2,7 +2,9 @@
 use core::{num::NonZero, time::Duration};
 
 use magnus::{Error, Integer, Ruby, prelude::*};
-use matryona_machines::ruby::{duration, instant, integer, nanoseconds, optional, positive};
+use matryona_machines::ruby::{
+    duration, instant, integer, nanoseconds, optional, optional_instant, positive,
+};
 
 use crate::{eval, raises};
 
@@ -171,6 +173,30 @@ pub fn wide(ruby: &Ruby) -> Result<(), Error> {
         Duration::MAX,
     ] {
         assert_eq!(instant(nanoseconds(ruby, sent).as_value(), "t")?, sent);
+    }
+
+    // nil, or what `instant` reads, messages included.
+    assert_eq!(optional_instant(value("nil")?, "deadline")?, None);
+    assert_eq!(
+        optional_instant(value("2**64")?, "deadline")?,
+        Some(Duration::from_nanos_u128(1 << 64))
+    );
+    let max = value("18446744073709551615 * 1_000_000_000 + 999_999_999")?;
+    assert_eq!(optional_instant(max, "deadline")?, Some(Duration::MAX));
+    let message = "deadline must be in 0..=Duration::MAX nanoseconds";
+    for code in ["-1", "2**128"] {
+        raises(
+            optional_instant(value(code)?, "deadline"),
+            range_error,
+            message,
+        );
+    }
+    for code in ["false", "1.5", "'1'"] {
+        raises(
+            optional_instant(value(code)?, "deadline"),
+            type_error,
+            "deadline must be an Integer",
+        );
     }
     Ok(())
 }
