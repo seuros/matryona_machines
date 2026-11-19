@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/seuros/matryona_machines/compare/matryona-machines-v0.6.0...matryona-machines-v0.7.0) (2026-11-19)
+
+
+### Features
+
+* add optional_instant, nil or a full-range instant ([6d73c7f](https://github.com/seuros/matryona_machines/commit/6d73c7f753496a9dfe654cb479b9b90d48cec813))
+
 ## [0.6.0](https://github.com/seuros/matryona_machines/compare/matryona-machines-v0.5.0...matryona-machines-v0.6.0) (2026-11-16)
 
 
